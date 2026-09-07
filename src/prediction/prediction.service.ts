@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
 import {
@@ -10,6 +12,8 @@ import {
   PlayerSnapshot,
   SquadRules,
 } from '../common/types/domain.types';
+import { GameweekEntity } from '../persistence/entities/gameweek.entity';
+import { PlayerSnapshotEntity } from '../persistence/entities/player-snapshot.entity';
 
 export interface PredictionResult {
   players: Player[];
@@ -23,10 +27,16 @@ export interface PredictionResult {
 
 @Injectable()
 export class PredictionService {
+  private readonly logger = new Logger(PredictionService.name);
+
   constructor(
     private readonly strategy: HeuristicStrategy,
     private readonly ingestionService: IngestionService,
     private readonly config: ConfigService,
+    @InjectRepository(GameweekEntity)
+    private readonly gameweekRepository: Repository<GameweekEntity>,
+    @InjectRepository(PlayerSnapshotEntity)
+    private readonly playerSnapshotRepository: Repository<PlayerSnapshotEntity>,
   ) {}
 
   async predictGameweek(): Promise<PredictionResult> {
@@ -56,7 +66,34 @@ export class PredictionService {
       fixtures,
     );
     const predictions = await this.strategy.predict(enriched);
+    await this.recordSnapshotHistory(targetGameweek, predictions);
     return { players, rules, targetGameweek, currentSquad, predictions };
+  }
+
+  // Best-effort backtesting history (ARCHITECTURE.md §6) — captures exactly
+  // what the model saw when it made this gameweek's recommendation. Unlike
+  // Proposal/Approval/ExecutionLog, this is a supplementary audit trail, not
+  // the app's actual state, so a write failure here must not block
+  // generating and alerting the proposal itself (CLAUDE.md: alert → wait
+  // for approval is the hard constraint, not this).
+  private async recordSnapshotHistory(
+    targetGameweek: Gameweek,
+    predictions: PlayerSnapshot[],
+  ): Promise<void> {
+    try {
+      await this.gameweekRepository.save(
+        this.gameweekRepository.create(targetGameweek),
+      );
+      await this.playerSnapshotRepository.save(
+        predictions.map((prediction) =>
+          this.playerSnapshotRepository.create(prediction),
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to record snapshot history for gameweek ${targetGameweek.id}: ${String(error)}`,
+      );
+    }
   }
 
   private withNextFixtureDifficulty(

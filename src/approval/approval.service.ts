@@ -1,10 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { ApprovalStateMachine } from './approval.state-machine';
 import { ProposalService } from '../proposal/proposal.service';
 import { ExecutionService } from '../execution/execution.service';
 import { AlertService } from '../alert/alert.service';
 import { Approval, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
+import { ApprovalEntity } from '../persistence/entities/approval.entity';
 
 type Decision = ProposalStatus.APPROVED | ProposalStatus.REJECTED;
 
@@ -17,6 +20,8 @@ export class ApprovalService {
     private readonly proposalService: ProposalService,
     private readonly executionService: ExecutionService,
     private readonly alertService: AlertService,
+    @InjectRepository(ApprovalEntity)
+    private readonly approvalRepository: Repository<ApprovalEntity>,
   ) {}
 
   async decide(
@@ -24,7 +29,7 @@ export class ApprovalService {
     decision: Decision,
     decidedBy: string,
   ): Promise<Approval> {
-    const proposal = this.proposalService.findById(proposalId);
+    const proposal = await this.proposalService.findById(proposalId);
     if (!proposal) {
       throw new Error(`No proposal found with id ${proposalId}.`);
     }
@@ -32,14 +37,27 @@ export class ApprovalService {
     if (this.isPastDeadline(proposal.deadlineAt)) {
       // A late reply never applies, even "approve" — expire instead of
       // honoring it. The fallback on silence/lateness is always "do nothing."
-      this.expire(proposalId);
+      await this.expire(proposalId);
       throw new Error(
         'Deadline has already passed; proposal expired instead of being decided.',
       );
     }
 
     this.stateMachine.assertTransition(proposal.status, decision);
-    const updated = this.proposalService.updateStatus(proposalId, decision);
+    const updated = await this.proposalService.updateStatus(
+      proposalId,
+      decision,
+    );
+
+    const approval: Approval = {
+      proposalId,
+      decidedBy,
+      decision,
+      decidedAt: new Date().toISOString(),
+    };
+    await this.approvalRepository.save(
+      this.approvalRepository.create(approval),
+    );
 
     if (decision === ProposalStatus.APPROVED) {
       // Best-effort: an execution failure shouldn't undo the recorded
@@ -48,12 +66,7 @@ export class ApprovalService {
       await this.applyApproved(updated);
     }
 
-    return {
-      proposalId,
-      decidedBy,
-      decision,
-      decidedAt: new Date().toISOString(),
-    };
+    return approval;
   }
 
   private async applyApproved(proposal: Proposal): Promise<void> {
@@ -73,24 +86,23 @@ export class ApprovalService {
   }
 
   // Idempotent — safe to call on a proposal that's already terminal (no-op).
-  expire(proposalId: string): void {
-    const proposal = this.proposalService.findById(proposalId);
+  async expire(proposalId: string): Promise<void> {
+    const proposal = await this.proposalService.findById(proposalId);
     if (!proposal) return;
     if (
       !this.stateMachine.canTransition(proposal.status, ProposalStatus.EXPIRED)
     ) {
       return;
     }
-    this.proposalService.updateStatus(proposalId, ProposalStatus.EXPIRED);
+    await this.proposalService.updateStatus(proposalId, ProposalStatus.EXPIRED);
   }
 
   // Sweeps every PENDING proposal whose deadline has passed without a reply.
-  // Intended to be called on a schedule (SchedulerModule) — not wired to a
-  // cron yet, that's part of the still-unbuilt weekly-pipeline orchestration.
-  expireOverdue(): void {
-    for (const proposal of this.proposalService.findAllPending()) {
+  // Intended to be called on a schedule (SchedulerModule).
+  async expireOverdue(): Promise<void> {
+    for (const proposal of await this.proposalService.findAllPending()) {
       if (this.isPastDeadline(proposal.deadlineAt)) {
-        this.expire(proposal.id);
+        await this.expire(proposal.id);
       }
     }
   }

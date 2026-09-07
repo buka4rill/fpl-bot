@@ -17,7 +17,7 @@ import { Position } from '../common/enums/position.enum';
 describe('DeadlineWatcherService', () => {
   let service: DeadlineWatcherService;
   let ingestionService: { getBootstrapSnapshot: jest.Mock };
-  let proposalService: { generateProposal: jest.Mock };
+  let proposalService: { generateProposal: jest.Mock; findByGameweekId: jest.Mock };
   let alertService: { sendProposal: jest.Mock };
   let approvalService: { expireOverdue: jest.Mock };
   let config: { get: jest.Mock };
@@ -67,6 +67,7 @@ describe('DeadlineWatcherService', () => {
     ingestionService = { getBootstrapSnapshot: jest.fn() };
     proposalService = {
       generateProposal: jest.fn().mockResolvedValue(proposal),
+      findByGameweekId: jest.fn().mockResolvedValue(undefined),
     };
     alertService = { sendProposal: jest.fn() };
     approvalService = { expireOverdue: jest.fn() };
@@ -151,6 +152,21 @@ describe('DeadlineWatcherService', () => {
       players,
       snapshots,
     );
+  });
+
+  it('does not re-propose a gameweek already persisted before a restart', async () => {
+    // Simulates restarting mid-window: no in-process claim, but the DB
+    // already has a proposal for this gameweek from before the restart.
+    proposalService.findByGameweekId.mockResolvedValue(proposal);
+    ingestionService.getBootstrapSnapshot.mockResolvedValue({
+      gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
+      players,
+      snapshots,
+    });
+
+    await service.checkDeadline();
+
+    expect(proposalService.generateProposal).not.toHaveBeenCalled();
   });
 
   it('does not re-propose for the same gameweek twice', async () => {

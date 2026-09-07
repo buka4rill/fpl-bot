@@ -1,15 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { ExecutionService } from './execution.service';
 import { FplAuthClient } from './clients/fpl-auth.client';
 import { FplPick } from './clients/fpl-auth.types';
 import { Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { FplChip } from '../common/enums/chip.enum';
+import { ExecutionLogEntity } from '../persistence/entities/execution-log.entity';
 
 describe('ExecutionService', () => {
   let service: ExecutionService;
   let fplAuthClient: { getMyTeam: jest.Mock; setLineup: jest.Mock };
+  let executionLogRepository: { create: jest.Mock; save: jest.Mock };
 
   const pick = (
     element: number,
@@ -57,6 +60,10 @@ describe('ExecutionService', () => {
       }),
       setLineup: jest.fn().mockResolvedValue({ picks: currentPicks }),
     };
+    executionLogRepository = {
+      create: jest.fn().mockImplementation((log) => log),
+      save: jest.fn().mockImplementation((log) => Promise.resolve(log)),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -65,6 +72,10 @@ describe('ExecutionService', () => {
         {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('6909032') },
+        },
+        {
+          provide: getRepositoryToken(ExecutionLogEntity),
+          useValue: executionLogRepository,
         },
       ],
     }).compile();
@@ -95,6 +106,9 @@ describe('ExecutionService', () => {
     );
     expect(log.success).toBe(true);
     expect(log.proposalId).toBe('p1');
+    expect(executionLogRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({ proposalId: 'p1', success: true }),
+    );
   });
 
   it('refuses to execute once the deadline has passed', async () => {

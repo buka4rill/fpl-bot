@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { ApprovalService } from './approval.service';
 import { ApprovalStateMachine } from './approval.state-machine';
 import { ProposalService } from '../proposal/proposal.service';
@@ -6,6 +7,7 @@ import { ExecutionService } from '../execution/execution.service';
 import { AlertService } from '../alert/alert.service';
 import { Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
+import { ApprovalEntity } from '../persistence/entities/approval.entity';
 
 describe('ApprovalService', () => {
   let service: ApprovalService;
@@ -16,6 +18,7 @@ describe('ApprovalService', () => {
   };
   let executionService: { apply: jest.Mock };
   let alertService: { sendExecutionResult: jest.Mock };
+  let approvalRepository: { create: jest.Mock; save: jest.Mock };
 
   const baseProposal = (overrides: Partial<Proposal> = {}): Proposal => ({
     id: 'p1',
@@ -37,11 +40,11 @@ describe('ApprovalService', () => {
   beforeEach(async () => {
     proposalService = {
       findById: jest.fn(),
-      findAllPending: jest.fn().mockReturnValue([]),
+      findAllPending: jest.fn().mockResolvedValue([]),
       updateStatus: jest
         .fn()
         .mockImplementation((id: string, status: ProposalStatus) =>
-          baseProposal({ id, status }),
+          Promise.resolve(baseProposal({ id, status })),
         ),
     };
     executionService = {
@@ -49,6 +52,10 @@ describe('ApprovalService', () => {
     };
     alertService = {
       sendExecutionResult: jest.fn().mockResolvedValue(undefined),
+    };
+    approvalRepository = {
+      create: jest.fn().mockImplementation((approval) => approval),
+      save: jest.fn().mockImplementation((approval) => Promise.resolve(approval)),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -58,6 +65,10 @@ describe('ApprovalService', () => {
         { provide: ProposalService, useValue: proposalService },
         { provide: ExecutionService, useValue: executionService },
         { provide: AlertService, useValue: alertService },
+        {
+          provide: getRepositoryToken(ApprovalEntity),
+          useValue: approvalRepository,
+        },
       ],
     }).compile();
 
@@ -66,7 +77,7 @@ describe('ApprovalService', () => {
 
   describe('decide', () => {
     it('approves a PENDING proposal before the deadline', async () => {
-      proposalService.findById.mockReturnValue(baseProposal());
+      proposalService.findById.mockResolvedValue(baseProposal());
 
       const approval = await service.decide(
         'p1',
@@ -84,8 +95,22 @@ describe('ApprovalService', () => {
       expect(approval.decidedAt).toBeTruthy();
     });
 
+    it('persists the approval record', async () => {
+      proposalService.findById.mockResolvedValue(baseProposal());
+
+      await service.decide('p1', ProposalStatus.APPROVED, 'user1');
+
+      expect(approvalRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          proposalId: 'p1',
+          decision: ProposalStatus.APPROVED,
+          decidedBy: 'user1',
+        }),
+      );
+    });
+
     it('triggers execution and a success alert once approved', async () => {
-      proposalService.findById.mockReturnValue(baseProposal());
+      proposalService.findById.mockResolvedValue(baseProposal());
 
       await service.decide('p1', ProposalStatus.APPROVED, 'user1');
 
@@ -97,7 +122,7 @@ describe('ApprovalService', () => {
     });
 
     it('alerts loudly instead of throwing when execution fails', async () => {
-      proposalService.findById.mockReturnValue(baseProposal());
+      proposalService.findById.mockResolvedValue(baseProposal());
       executionService.apply.mockRejectedValue(new Error('FPL API down'));
 
       const approval = await service.decide(
@@ -115,7 +140,7 @@ describe('ApprovalService', () => {
     });
 
     it('rejects a PENDING proposal before the deadline', async () => {
-      proposalService.findById.mockReturnValue(baseProposal());
+      proposalService.findById.mockResolvedValue(baseProposal());
 
       await service.decide('p1', ProposalStatus.REJECTED, 'user1');
 
@@ -127,7 +152,7 @@ describe('ApprovalService', () => {
     });
 
     it('throws for an unknown proposal', async () => {
-      proposalService.findById.mockReturnValue(undefined);
+      proposalService.findById.mockResolvedValue(undefined);
 
       await expect(
         service.decide('missing', ProposalStatus.APPROVED, 'user1'),
@@ -135,7 +160,7 @@ describe('ApprovalService', () => {
     });
 
     it('expires (not approves) a reply that arrives after the deadline', async () => {
-      proposalService.findById.mockReturnValue(
+      proposalService.findById.mockResolvedValue(
         baseProposal({ deadlineAt: '2000-01-01T00:00:00Z' }),
       );
 
@@ -154,7 +179,7 @@ describe('ApprovalService', () => {
     });
 
     it('refuses to re-decide an already-terminal proposal', async () => {
-      proposalService.findById.mockReturnValue(
+      proposalService.findById.mockResolvedValue(
         baseProposal({ status: ProposalStatus.APPROVED }),
       );
 
@@ -165,10 +190,10 @@ describe('ApprovalService', () => {
   });
 
   describe('expire', () => {
-    it('moves a PENDING proposal to EXPIRED', () => {
-      proposalService.findById.mockReturnValue(baseProposal());
+    it('moves a PENDING proposal to EXPIRED', async () => {
+      proposalService.findById.mockResolvedValue(baseProposal());
 
-      service.expire('p1');
+      await service.expire('p1');
 
       expect(proposalService.updateStatus).toHaveBeenCalledWith(
         'p1',
@@ -176,37 +201,37 @@ describe('ApprovalService', () => {
       );
     });
 
-    it('is a no-op for an unknown proposal', () => {
-      proposalService.findById.mockReturnValue(undefined);
+    it('is a no-op for an unknown proposal', async () => {
+      proposalService.findById.mockResolvedValue(undefined);
 
-      expect(() => service.expire('missing')).not.toThrow();
+      await expect(service.expire('missing')).resolves.not.toThrow();
       expect(proposalService.updateStatus).not.toHaveBeenCalled();
     });
 
-    it('is a no-op for an already-terminal proposal', () => {
-      proposalService.findById.mockReturnValue(
+    it('is a no-op for an already-terminal proposal', async () => {
+      proposalService.findById.mockResolvedValue(
         baseProposal({ status: ProposalStatus.REJECTED }),
       );
 
-      service.expire('p1');
+      await service.expire('p1');
 
       expect(proposalService.updateStatus).not.toHaveBeenCalled();
     });
   });
 
   describe('expireOverdue', () => {
-    it('expires only PENDING proposals past their deadline', () => {
+    it('expires only PENDING proposals past their deadline', async () => {
       const overdue = baseProposal({
         id: 'overdue',
         deadlineAt: '2000-01-01T00:00:00Z',
       });
       const notYetDue = baseProposal({ id: 'not-due' });
-      proposalService.findAllPending.mockReturnValue([overdue, notYetDue]);
+      proposalService.findAllPending.mockResolvedValue([overdue, notYetDue]);
       proposalService.findById.mockImplementation((id: string) =>
-        [overdue, notYetDue].find((p) => p.id === id),
+        Promise.resolve([overdue, notYetDue].find((p) => p.id === id)),
       );
 
-      service.expireOverdue();
+      await service.expireOverdue();
 
       expect(proposalService.updateStatus).toHaveBeenCalledWith(
         'overdue',

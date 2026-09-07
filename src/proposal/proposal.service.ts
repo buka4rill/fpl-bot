@@ -1,17 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { SquadOptimizerService } from '../optimization/squad-optimizer.service';
 import { Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
+import { ProposalEntity } from '../persistence/entities/proposal.entity';
 
 @Injectable()
 export class ProposalService {
-  // Placeholder store until a persistence layer is chosen (CLAUDE.md — no
-  // ORM installed yet). State resets on restart; swap for a real repository
-  // once the DB decision is made.
-  private readonly proposals = new Map<string, Proposal>();
-
-  constructor(private readonly squadOptimizerService: SquadOptimizerService) {}
+  constructor(
+    private readonly squadOptimizerService: SquadOptimizerService,
+    @InjectRepository(ProposalEntity)
+    private readonly proposalRepository: Repository<ProposalEntity>,
+  ) {}
 
   // `freeTransfers` can't be derived from the public API (see CurrentSquad's
   // doc comment) — passed through to SquadOptimizerService, which defaults
@@ -40,34 +42,40 @@ export class ProposalService {
 
   // Shared by any proposal source (the optimizer, or a manual override like a
   // captain-only swap) — mints the id/status/timestamp and stores it.
-  store(proposal: Omit<Proposal, 'id' | 'status' | 'createdAt'>): Proposal {
-    const stored: Proposal = {
+  async store(proposal: Omit<Proposal, 'id' | 'status' | 'createdAt'>): Promise<Proposal> {
+    const entity = this.proposalRepository.create({
       ...proposal,
       id: randomUUID(),
       status: ProposalStatus.PENDING,
       createdAt: new Date().toISOString(),
-    };
-    this.proposals.set(stored.id, stored);
-    return stored;
+    });
+    return this.proposalRepository.save(entity);
   }
 
-  findById(id: string): Proposal | undefined {
-    return this.proposals.get(id);
+  async findById(id: string): Promise<Proposal | undefined> {
+    const proposal = await this.proposalRepository.findOneBy({ id });
+    return proposal ?? undefined;
   }
 
-  findAllPending(): Proposal[] {
-    return [...this.proposals.values()].filter(
-      (proposal) => proposal.status === ProposalStatus.PENDING,
-    );
+  // Restart-safe "have we already proposed for this gameweek" lookup —
+  // consumed by DeadlineWatcherService instead of an in-memory dedupe flag.
+  // Not unique by gameweek (see ProposalEntity's comment), so this returns
+  // whichever proposal was created first for the gameweek.
+  async findByGameweekId(gameweekId: number): Promise<Proposal | undefined> {
+    const proposal = await this.proposalRepository.findOneBy({ gameweekId });
+    return proposal ?? undefined;
   }
 
-  updateStatus(id: string, status: ProposalStatus): Proposal {
-    const proposal = this.proposals.get(id);
+  async findAllPending(): Promise<Proposal[]> {
+    return this.proposalRepository.findBy({ status: ProposalStatus.PENDING });
+  }
+
+  async updateStatus(id: string, status: ProposalStatus): Promise<Proposal> {
+    const proposal = await this.proposalRepository.findOneBy({ id });
     if (!proposal) {
       throw new Error(`No proposal found with id ${id}.`);
     }
-    const updated: Proposal = { ...proposal, status };
-    this.proposals.set(id, updated);
-    return updated;
+    const updated: ProposalEntity = { ...proposal, status };
+    return this.proposalRepository.save(updated);
   }
 }

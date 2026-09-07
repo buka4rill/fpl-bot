@@ -1,13 +1,21 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ProposalService } from './proposal.service';
 import { ProposalController } from './proposal.controller';
 import { OptimizationModule } from '../optimization/optimization.module';
 import { ExecutionModule } from '../execution/execution.module';
 import { AlertModule } from '../alert/alert.module';
 import { IngestionModule } from '../ingestion/ingestion.module';
+import { ProposalEntity } from '../persistence/entities/proposal.entity';
 
 @Module({
-  imports: [OptimizationModule, ExecutionModule, AlertModule, IngestionModule],
+  imports: [
+    TypeOrmModule.forFeature([ProposalEntity]),
+    OptimizationModule,
+    ExecutionModule,
+    AlertModule,
+    IngestionModule,
+  ],
   controllers: [ProposalController],
   providers: [ProposalService],
   exports: [ProposalService],

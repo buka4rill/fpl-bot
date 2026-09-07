@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { PredictionService } from './prediction.service';
 import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
@@ -12,6 +13,8 @@ import {
   SquadRules,
 } from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
+import { GameweekEntity } from '../persistence/entities/gameweek.entity';
+import { PlayerSnapshotEntity } from '../persistence/entities/player-snapshot.entity';
 
 describe('PredictionService', () => {
   let service: PredictionService;
@@ -22,6 +25,8 @@ describe('PredictionService', () => {
   };
   let strategy: { predict: jest.Mock };
   let config: { get: jest.Mock };
+  let gameweekRepository: { create: jest.Mock; save: jest.Mock };
+  let playerSnapshotRepository: { create: jest.Mock; save: jest.Mock };
 
   const players: Player[] = [
     {
@@ -123,6 +128,14 @@ describe('PredictionService', () => {
     // No FPL_TEAM_ID configured by default — most tests don't care about
     // the current-squad path.
     config = { get: jest.fn().mockReturnValue(undefined) };
+    gameweekRepository = {
+      create: jest.fn().mockImplementation((gw) => gw),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    playerSnapshotRepository = {
+      create: jest.fn().mockImplementation((snapshot) => snapshot),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -130,6 +143,14 @@ describe('PredictionService', () => {
         { provide: HeuristicStrategy, useValue: strategy },
         { provide: IngestionService, useValue: ingestionService },
         { provide: ConfigService, useValue: config },
+        {
+          provide: getRepositoryToken(GameweekEntity),
+          useValue: gameweekRepository,
+        },
+        {
+          provide: getRepositoryToken(PlayerSnapshotEntity),
+          useValue: playerSnapshotRepository,
+        },
       ],
     }).compile();
 
@@ -180,6 +201,22 @@ describe('PredictionService', () => {
 
     expect(ingestionService.getCurrentSquad).toHaveBeenCalledWith(42);
     expect(result.currentSquad).toBe(currentSquad);
+  });
+
+  it('records gameweek/snapshot history for backtesting', async () => {
+    const predicted = [{ ...snapshots[0], predictedPoints: 5 }];
+    strategy.predict.mockResolvedValue(predicted);
+
+    await service.predictGameweek();
+
+    expect(gameweekRepository.save).toHaveBeenCalledWith(gameweeks[1]);
+    expect(playerSnapshotRepository.save).toHaveBeenCalledWith(predicted);
+  });
+
+  it('does not fail the proposal when recording history fails', async () => {
+    gameweekRepository.save.mockRejectedValue(new Error('DB down'));
+
+    await expect(service.predictGameweek()).resolves.toBeDefined();
   });
 
   it('throws when bootstrap-static has no upcoming gameweek', async () => {

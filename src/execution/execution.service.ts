@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { FplAuthClient } from './clients/fpl-auth.client';
 import { FplPick } from './clients/fpl-auth.types';
 import { Proposal, ExecutionLog } from '../common/types/domain.types';
+import { ExecutionLogEntity } from '../persistence/entities/execution-log.entity';
 
 export interface CurrentSquadShape {
   lineup: number[];
@@ -17,13 +20,11 @@ export interface CurrentSquadShape {
 // rollback story are proven out here first.
 @Injectable()
 export class ExecutionService {
-  // Placeholder store until a persistence layer is chosen (CLAUDE.md — same
-  // pattern as ProposalService). Resets on restart.
-  private readonly logs: ExecutionLog[] = [];
-
   constructor(
     private readonly fplAuthClient: FplAuthClient,
     private readonly config: ConfigService,
+    @InjectRepository(ExecutionLogEntity)
+    private readonly executionLogRepository: Repository<ExecutionLogEntity>,
   ) {}
 
   // Only ever call this from an APPROVED proposal, before its deadline.
@@ -57,14 +58,15 @@ export class ExecutionService {
       responsePayload = { error: String(error) };
     }
 
-    const log: ExecutionLog = {
-      proposalId: proposal.id,
-      requestPayload: { picks },
-      responsePayload,
-      appliedAt: new Date().toISOString(),
-      success,
-    };
-    this.logs.push(log);
+    const log = await this.executionLogRepository.save(
+      this.executionLogRepository.create({
+        proposalId: proposal.id,
+        requestPayload: { picks },
+        responsePayload,
+        appliedAt: new Date().toISOString(),
+        success,
+      }),
+    );
 
     if (!success) {
       throw new Error(

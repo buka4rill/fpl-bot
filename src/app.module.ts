@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import configuration from './config/configuration';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -16,6 +17,21 @@ import { SchedulerModule } from './scheduler/scheduler.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres' as const,
+        host: config.get<string>('database.host'),
+        port: config.get<number>('database.port'),
+        database: config.get<string>('database.name'),
+        username: config.get<string>('database.user'),
+        password: config.get<string>('database.password'),
+        entities: [__dirname + '/persistence/entities/*.entity.{ts,js}'],
+        migrations: [__dirname + '/persistence/migrations/*.{ts,js}'],
+        synchronize: false,
+        migrationsRun: true,
+      }),
+    }),
     IngestionModule,
     TrendsModule,
     PredictionModule,

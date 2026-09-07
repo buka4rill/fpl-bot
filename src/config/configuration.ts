@@ -10,6 +10,13 @@ export interface AppConfig {
   scheduler: {
     deadlineLeadHours: number;
   };
+  database: {
+    host: string;
+    port: number;
+    name: string;
+    user: string;
+    password: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -23,5 +30,12 @@ export default (): AppConfig => ({
   },
   scheduler: {
     deadlineLeadHours: Number(process.env.DEADLINE_LEAD_HOURS ?? 24),
+  },
+  database: {
+    host: process.env.DATABASE_HOST ?? 'localhost',
+    port: Number(process.env.DATABASE_PORT ?? 5432),
+    name: process.env.DATABASE_NAME ?? 'fpl_bot',
+    user: process.env.DATABASE_USER ?? 'fpl_bot',
+    password: process.env.DATABASE_PASSWORD ?? 'fpl_bot',
   },
 });

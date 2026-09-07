@@ -36,7 +36,7 @@ export class ProposalController {
       throw new Error('No upcoming gameweek found to propose a swap for.');
     }
 
-    const proposal: Proposal = this.proposalService.store({
+    const proposal: Proposal = await this.proposalService.store({
       gameweekId: targetGameweek.id,
       deadlineAt: targetGameweek.deadlineAt,
       transfers: [],

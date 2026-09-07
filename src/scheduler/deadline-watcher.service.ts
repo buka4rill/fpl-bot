@@ -21,12 +21,15 @@ const POLL_INTERVAL_MS = 60 * 60 * 1000;
 export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DeadlineWatcherService.name);
   private intervalHandle: NodeJS.Timeout | undefined;
-  // In-memory — resets on restart, same placeholder status as ProposalService's
-  // store (CLAUDE.md: no persistence layer chosen yet). Worst case on
-  // restart mid-window is one duplicate proposal/alert for the same
-  // gameweek, not a missed or double-applied change (nothing executes
-  // without a separate explicit approval).
-  private lastProposedGameweekId: number | undefined;
+  // In-process only — NOT the restart-safe dedupe (that's the DB check
+  // below via ProposalService.findByGameweekId). This exists purely to
+  // close the race between two overlapping checkDeadline() calls in the
+  // same running process (e.g. the immediate on-init check racing the
+  // hourly poll): both can pass the DB check above before either's
+  // generateProposal() call has actually persisted a row, since that's the
+  // only atomic point. Resets on restart by design — a restart mid-window
+  // is exactly what the DB check now covers.
+  private lastClaimedGameweekId: number | undefined;
 
   constructor(
     private readonly ingestionService: IngestionService,
@@ -58,17 +61,13 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
   // Always reads the real deadline from bootstrap-static — never assumes a
   // fixed weekday/time, since blank/double gameweeks shift it.
   async checkDeadline(): Promise<void> {
-    this.approvalService.expireOverdue();
+    await this.approvalService.expireOverdue();
 
     const { gameweeks, players, snapshots } =
       await this.ingestionService.getBootstrapSnapshot();
     const targetGameweek = gameweeks.find((gameweek) => gameweek.isNext);
     if (!targetGameweek) {
       return;
-    }
-
-    if (this.lastProposedGameweekId === targetGameweek.id) {
-      return; // already proposed + alerted for this gameweek
     }
 
     const leadHours = Number(
@@ -84,14 +83,23 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Claim this gameweek synchronously, before any further `await` — two
-    // overlapping checks (e.g. the immediate on-init check racing a manual
-    // trigger, or a slow check still running when the next poll tick fires)
-    // would otherwise both pass the guard above, since the actual work
-    // below involves real network calls with a real time gap. Rolled back
-    // on failure so a transient error still gets retried next poll rather
-    // than silently never alerting for this gameweek.
-    this.lastProposedGameweekId = targetGameweek.id;
+    // Restart-safe dedupe — was a proposal for this gameweek already
+    // persisted, e.g. by a run before a restart?
+    const alreadyProposed = await this.proposalService.findByGameweekId(
+      targetGameweek.id,
+    );
+    if (alreadyProposed) {
+      return;
+    }
+
+    // Claim synchronously, before any further await (see the field's
+    // comment) — rolled back on failure so a transient error still gets
+    // retried next poll rather than silently never alerting for this
+    // gameweek.
+    if (this.lastClaimedGameweekId === targetGameweek.id) {
+      return;
+    }
+    this.lastClaimedGameweekId = targetGameweek.id;
     try {
       this.logger.log(
         `Generating proposal for gameweek ${targetGameweek.id} (deadline ${targetGameweek.deadlineAt})...`,
@@ -99,7 +107,7 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
       const proposal = await this.proposalService.generateProposal();
       await this.alertService.sendProposal(proposal, players, snapshots);
     } catch (error) {
-      this.lastProposedGameweekId = undefined;
+      this.lastClaimedGameweekId = undefined;
       throw error;
     }
   }
