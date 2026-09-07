@@ -5,7 +5,12 @@ import { IngestionService } from '../ingestion/ingestion.service';
 import { ProposalService } from '../proposal/proposal.service';
 import { AlertService } from '../alert/alert.service';
 import { ApprovalService } from '../approval/approval.service';
-import { Gameweek, Player, Proposal } from '../common/types/domain.types';
+import {
+  Gameweek,
+  Player,
+  PlayerSnapshot,
+  Proposal,
+} from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
 
@@ -27,12 +32,18 @@ describe('DeadlineWatcherService', () => {
     },
   ];
 
+  const snapshots: PlayerSnapshot[] = [
+    { gameweekId: 4, playerId: 1, price: 5.0, ownershipPct: 10 },
+  ];
+
   const proposal: Proposal = {
     id: 'prop-1',
     gameweekId: 4,
     deadlineAt: '2026-09-12T12:30:00Z',
     transfers: [],
     lineup: [],
+    benchGoalkeeperId: 1,
+    benchOutfieldIds: [],
     captainId: 1,
     viceCaptainId: 1,
     expectedGain: 10,
@@ -79,6 +90,7 @@ describe('DeadlineWatcherService', () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [],
       players,
+      snapshots,
     });
 
     await service.checkDeadline();
@@ -90,6 +102,7 @@ describe('DeadlineWatcherService', () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [],
       players,
+      snapshots,
     });
 
     await service.checkDeadline();
@@ -102,6 +115,7 @@ describe('DeadlineWatcherService', () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweekWithDeadline(hoursFromNow(48))],
       players,
+      snapshots,
     });
 
     await service.checkDeadline();
@@ -113,6 +127,7 @@ describe('DeadlineWatcherService', () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweekWithDeadline(hoursFromNow(-1))],
       players,
+      snapshots,
     });
 
     await service.checkDeadline();
@@ -125,18 +140,24 @@ describe('DeadlineWatcherService', () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
       players,
+      snapshots,
     });
 
     await service.checkDeadline();
 
     expect(proposalService.generateProposal).toHaveBeenCalledTimes(1);
-    expect(alertService.sendProposal).toHaveBeenCalledWith(proposal, players);
+    expect(alertService.sendProposal).toHaveBeenCalledWith(
+      proposal,
+      players,
+      snapshots,
+    );
   });
 
   it('does not re-propose for the same gameweek twice', async () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
       players,
+      snapshots,
     });
 
     await service.checkDeadline();
@@ -160,6 +181,7 @@ describe('DeadlineWatcherService', () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
       players,
+      snapshots,
     });
 
     const first = service.checkDeadline();
@@ -174,6 +196,7 @@ describe('DeadlineWatcherService', () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
       players,
+      snapshots,
     });
     proposalService.generateProposal.mockRejectedValueOnce(new Error('boom'));
 
@@ -191,6 +214,7 @@ describe('DeadlineWatcherService', () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
       players,
+      snapshots,
     });
 
     await service.checkDeadline();
@@ -204,6 +228,7 @@ describe('DeadlineWatcherService', () => {
       ingestionService.getBootstrapSnapshot.mockResolvedValue({
         gameweeks: [],
         players,
+        snapshots,
       });
     });
 

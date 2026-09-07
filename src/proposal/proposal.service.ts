@@ -26,6 +26,8 @@ export class ProposalService {
       deadlineAt: optimization.targetGameweek.deadlineAt,
       transfers: optimization.transfers,
       lineup: optimization.startingXI,
+      benchGoalkeeperId: optimization.benchGoalkeeperId,
+      benchOutfieldIds: optimization.benchOutfieldIds,
       captainId: optimization.captainId,
       viceCaptainId: optimization.viceCaptainId,
       // Net of hit cost — "how many more points is this plan expected to

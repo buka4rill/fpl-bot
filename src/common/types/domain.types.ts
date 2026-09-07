@@ -104,6 +104,8 @@ export interface Proposal {
   deadlineAt: string; // ISO timestamp — the gameweek deadline this must be actioned before
   transfers: TransferPlan[];
   lineup: number[]; // starting XI player IDs
+  benchGoalkeeperId: number;
+  benchOutfieldIds: number[]; // ordered by predicted points desc
   captainId: number;
   viceCaptainId: number;
   chip?: FplChip;

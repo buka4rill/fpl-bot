@@ -48,6 +48,8 @@ describe('ProposalService', () => {
     expect(proposal.gameweekId).toBe(4);
     expect(proposal.deadlineAt).toBe('2026-09-12T12:30:00Z');
     expect(proposal.lineup).toEqual(optimization.startingXI);
+    expect(proposal.benchGoalkeeperId).toBe(12);
+    expect(proposal.benchOutfieldIds).toEqual([13, 14, 15]);
     expect(proposal.captainId).toBe(1);
     expect(proposal.viceCaptainId).toBe(2);
     expect(proposal.expectedGain).toBe(55.5);

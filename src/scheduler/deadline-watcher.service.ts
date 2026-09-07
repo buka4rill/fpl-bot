@@ -60,7 +60,7 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
   async checkDeadline(): Promise<void> {
     this.approvalService.expireOverdue();
 
-    const { gameweeks, players } =
+    const { gameweeks, players, snapshots } =
       await this.ingestionService.getBootstrapSnapshot();
     const targetGameweek = gameweeks.find((gameweek) => gameweek.isNext);
     if (!targetGameweek) {
@@ -97,7 +97,7 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
         `Generating proposal for gameweek ${targetGameweek.id} (deadline ${targetGameweek.deadlineAt})...`,
       );
       const proposal = await this.proposalService.generateProposal();
-      await this.alertService.sendProposal(proposal, players);
+      await this.alertService.sendProposal(proposal, players, snapshots);
     } catch (error) {
       this.lastProposedGameweekId = undefined;
       throw error;
