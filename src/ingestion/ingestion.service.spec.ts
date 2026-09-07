@@ -51,6 +51,9 @@ describe('IngestionService', () => {
         form: '5.0',
         expected_goals: '0.00',
         expected_assists: '0.01',
+        minutes: 270,
+        status: 'a',
+        chance_of_playing_next_round: null,
       },
     ],
   };
@@ -119,6 +122,9 @@ describe('IngestionService', () => {
         form: 5.0,
         xg: 0,
         xa: 0.01,
+        minutesPlayed: 270,
+        status: 'a',
+        chanceOfPlayingNextRound: null,
       },
     ]);
   });

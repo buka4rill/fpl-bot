@@ -90,6 +90,9 @@ export class IngestionService {
       form: Number(element.form),
       xg: Number(element.expected_goals),
       xa: Number(element.expected_assists),
+      minutesPlayed: element.minutes,
+      status: element.status,
+      chanceOfPlayingNextRound: element.chance_of_playing_next_round,
     }));
 
     return { gameweeks, teams, players, snapshots };

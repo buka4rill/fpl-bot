@@ -32,8 +32,11 @@ export interface RawElement {
   now_cost: number; // tenths of £m, e.g. 60 = £6.0m
   selected_by_percent: string; // numeric string, e.g. "38.7"
   form: string; // numeric string, e.g. "5.0"
-  expected_goals: string;
-  expected_assists: string;
+  expected_goals: string; // season-cumulative, numeric string
+  expected_assists: string; // season-cumulative, numeric string
+  minutes: number; // season-cumulative
+  status: string; // 'a' | 'd' | 'i' | 's' | 'u'
+  chance_of_playing_next_round: number | null;
 }
 
 export interface BootstrapStaticResponse {

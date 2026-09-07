@@ -49,6 +49,15 @@ export interface PlayerSnapshot {
   form?: number;
   xg?: number;
   xa?: number;
+  minutesPlayed?: number;
+  // FPL status code: 'a' available, 'd' doubtful, 'i' injured, 's' suspended,
+  // 'u' unavailable.
+  status?: string;
+  // 0-100, null/undefined means no fitness doubt reported.
+  chanceOfPlayingNextRound?: number | null;
+  // 1 (easiest) to 5 (hardest). Filled in by PredictionService from ingested
+  // fixtures — absent on the snapshot as returned by IngestionService itself.
+  nextFixtureDifficulty?: number;
 }
 
 export interface TransferPlan {
