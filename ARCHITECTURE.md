@@ -66,7 +66,7 @@ flowchart TB
 
 | Module | Responsibility |
 |---|---|
-| **SchedulerModule** | Cron entry point. On a coarse schedule (e.g. daily), checks `bootstrap-static` for the next deadline and schedules the actual pipeline run for a fixed offset before it (e.g. 24h out) — never hardcodes "Friday." |
+| **SchedulerModule** | **Implemented differently than sketched here**: not a cron entry point that schedules a single future run, but an hourly poll (`DeadlineWatcherService`) that re-checks `bootstrap-static`'s next deadline every cycle and fires once the configurable lead time (`DEADLINE_LEAD_HOURS`) is reached. Simpler than pre-computing a scheduled run, and self-corrects if FPL reschedules a deadline after the last check. Still never hardcodes "Friday." |
 | **IngestionModule** | Typed clients for FPL's public endpoints + external stats source. Normalizes into internal `Player`, `Fixture`, `GameweekSnapshot` entities. Idempotent — safe to re-run per gameweek. |
 | **TrendsModule** | Pulls from a small, explicit whitelist of consensus/rank-tracker sources you approve in config (not open-ended scraping). Produces a lightweight "template team" / differential signal to feed the model, clearly labeled as a secondary signal. |
 | **PredictionModule** | Feature engineering (form, fixture difficulty, underlying stats, price/ownership deltas, minutes risk) → expected-points score per player per fixture. Model swappable behind an interface (`PredictionStrategy`) — start heuristic, upgrade to a trained model later without touching the rest of the pipeline. |
@@ -130,7 +130,16 @@ sequenceDiagram
 
 ---
 
-## 6. Persistence (core schema, sketch)
+## 6. Persistence (implemented)
+
+The sketch below is now real, via Postgres + TypeORM
+(`src/persistence/entities/`, migrations in `src/persistence/migrations/`).
+Field names differ cosmetically (camelCase, per TS/TypeORM convention, not
+snake_case), and a few fields were added as building revealed the need
+(`Gameweek.finished`; `Proposal.deadlineAt`, `benchGoalkeeperId`,
+`benchOutfieldIds`, `viceCaptainId`) — otherwise this is still an accurate
+picture of the schema. See `CLAUDE.md`'s "Persistence" section for the
+Docker/migration workflow.
 
 ```
 Gameweek(id, deadline_at, is_current, is_next)
@@ -140,7 +149,7 @@ Approval(proposal_id, decided_by, decision, decided_at)
 ExecutionLog(proposal_id, request_payload, response_payload, applied_at, success)
 ```
 
-Keeping `PlayerSnapshot` per gameweek (not overwritten) gives you a backtestable history — essential for eventually checking whether the prediction model is actually adding value over a naive baseline (e.g. "just captain the highest-owned premium").
+Keeping `PlayerSnapshot` per gameweek (not overwritten) gives you a backtestable history — essential for eventually checking whether the prediction model is actually adding value over a naive baseline (e.g. "just captain the highest-owned premium"). Written best-effort from `PredictionService` on every proposal generation — a write failure there must never block alerting the actual proposal.
 
 ---
 
@@ -154,6 +163,15 @@ Needs to be two-way, not just push. A few options, roughly in order of how littl
 
 Whichever you pick, the approval record should be cryptographically tied to the specific proposal (a signed token, not just "reply OK") so a stray message can't accidentally approve the wrong week.
 
+**Decided: Telegram bot**, implemented (`AlertModule`/`ApprovalModule`). One
+simplification from the recommendation above: approvals aren't a separately
+signed token — they ride on Telegram's own inline-button `callback_data`
+(`approve:<proposalId>` / `reject:<proposalId>`), checked against the
+configured chat id. Telegram's `callback_query` only ever fires from an
+actual tap on that exact button in that exact message, which already
+satisfies "a stray message can't accidentally approve the wrong week"
+without a separate signing layer.
+
 ---
 
 ## 8. Tech stack recommendation
@@ -161,12 +179,12 @@ Whichever you pick, the approval record should be cryptographically tied to the 
 | Concern | Suggestion |
 |---|---|
 | Framework | NestJS + TypeScript (as planned) |
-| Scheduling | `@nestjs/schedule` for the coarse daily check; a queue (BullMQ + Redis) for the actual pipeline run so retries/backoff are handled properly |
-| DB | Postgres + Prisma or TypeORM |
+| Scheduling | **Decided: a plain hourly `setInterval` poll** (`DeadlineWatcherService`), not `@nestjs/schedule` + a BullMQ/Redis queue as suggested here — simpler, and reasonable for a single-user, once-a-week workload. Revisit only if retry/backoff semantics become a real problem. |
+| DB | **Decided: Postgres + TypeORM**, explicit migrations, run locally via Docker — see `CLAUDE.md`'s "Persistence" section. |
 | Optimization | `javascript-lp-solver` (pure TS, fine for squad-sized ILP) — or, if the model outgrows it, a small internal Python microservice (PuLP/OR-Tools) called over HTTP, keeping NestJS as the orchestrator |
 | HTTP client for FPL | `axios`/`undici` with a dedicated cookie-jar-aware client for the authenticated session, isolated in `ExecutionModule` only |
-| Secrets | FPL credentials/session in a secrets manager or encrypted env store — never in the repo, never logged |
-| Notifications | Telegram Bot API (see §7) |
+| Secrets | **As built: a gitignored `.env`**, not a secrets manager as suggested here — reasonable for a single-user local setup; worth revisiting alongside the not-yet-started move off the local machine (`CLAUDE.md`'s deploy TODO). |
+| Notifications | Telegram Bot API (see §7) — decided, implemented |
 
 ---
 
@@ -204,6 +222,13 @@ src/
     deadline-watcher.service.ts
 ```
 
+The actual layout groups some of these under subfolders
+(`ingestion/clients/`, `execution/clients/`, `alert/adapters/`,
+`prediction/strategies/`) and adds two directories this sketch didn't
+anticipate: `persistence/` (entities + migrations, one place for the whole
+schema — see §6) and `common/` (shared domain types/enums/interfaces used
+across modules). The real `src/` tree is authoritative over this sketch.
+
 ---
 
 ## 10. Risks & mitigations
@@ -220,6 +245,10 @@ src/
 ---
 
 ## 11. Suggested build order
+
+Current status (checkmarks, what's next, open questions) is tracked live in
+`CLAUDE.md`'s "Build order" section, not duplicated here — this is the
+original plan as sketched.
 
 1. **Ingestion + prediction + optimization, recommend-only.** No execution module at all yet — just get a weekly Telegram message with a proposed team and confidence you'd actually want to send it.
 2. **Add the approval state machine and alert loop**, still without execution — verify the "propose → you decide → expire on silence" flow end-to-end.
