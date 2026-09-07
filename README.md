@@ -78,6 +78,39 @@ The app listens on `http://localhost:3000` (override with `PORT`).
 - `pnpm migration:run` / `pnpm migration:revert` — apply/undo migrations
   manually (the app also auto-applies pending migrations on boot)
 
+Postgres only exists inside that container — there's nothing on
+`localhost:5432` unless it's running (`docker compose ps` to check; `pnpm
+db:up` if not). That applies whether you're connecting via `psql` or a GUI
+client below, not just the app itself.
+
+### Inspecting the tables
+
+Quick one-offs from the terminal (no client needed):
+
+```bash
+docker compose exec postgres psql -U fpl_bot -d fpl_bot -c "\dt"              # list tables
+docker compose exec postgres psql -U fpl_bot -d fpl_bot -c "\d proposals"     # describe a table
+docker compose exec postgres psql -U fpl_bot -d fpl_bot -c "SELECT * FROM proposals;"
+```
+
+Or drop into an interactive session: `docker compose exec postgres psql -U
+fpl_bot -d fpl_bot`, then `\dt`, `\d <table>`, or any SQL; `\q` to exit.
+
+For a GUI ([DBeaver](https://dbeaver.io/), TablePlus, pgAdmin, VS Code's
+"PostgreSQL" extension, etc.) — the container publishes 5432 to the host, so
+connect with:
+
+| Field | Value |
+|---|---|
+| Host | `localhost` |
+| Port | `5432` |
+| Database | `fpl_bot` |
+| Username | `fpl_bot` |
+| Password | `fpl_bot` |
+
+(matches `DATABASE_*` in `.env`/`docker-compose.yml`'s defaults — adjust if
+you changed them).
+
 ## Testing
 
 ```bash
