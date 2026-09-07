@@ -170,13 +170,16 @@ Companion feature, unblocked and independent of the decision above:
   exposed by the public API, and available (unplayed) chips have the same
   gap. A weekly Telegram prompt (right before deadline, alongside the
   proposal alert) sidesteps needing auth for this entirely: "how many free
-  transfers?", then one yes/no per chip (Bench Boost, Triple Captain, Free
-  Hit, and Wildcard — note **Wildcard is 2x per season**, one per half,
-  since the 2023-24 rules change, so track it as two flags, not one). Any
-  chip answered "no" isn't asked again. Needs a handful of persisted fields
-  (current free transfers, per-chip used/available) — the persistence layer
-  this needed to survive restarts is now in place (see below), so this is
-  unblocked and ready to build whenever it's picked up.
+  transfers?", then one yes/no per chip. **Since the 2025/26 rules change,
+  all four chips — Wildcard, Free Hit, Bench Boost, Triple Captain — are
+  guaranteed twice per season, not just Wildcard**: one set for the first
+  half (must be played before the Gameweek 19 deadline, doesn't carry over)
+  and a fresh second set unlocked from Gameweek 20. So track all eight as
+  separate flags (`wildcard1`/`wildcard2`, `freeHit1`/`freeHit2`, etc.), not
+  four. Any chip answered "no" isn't asked again. Needs a handful of
+  persisted fields (current free transfers, per-chip used/available) — the
+  persistence layer this needed to survive restarts is now in place (see
+  below), so this is unblocked and ready to build whenever it's picked up.
 
 Companion feature, unblocked now that persistence has landed (see below):
 
