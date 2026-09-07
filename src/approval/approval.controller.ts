@@ -1,5 +1,7 @@
 import { Body, Controller, Logger, Post } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 import { ApprovalService } from './approval.service';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
@@ -9,6 +11,7 @@ import { ProposalStatus } from '../common/enums/proposal-status.enum';
 // (which sends messages) does.
 interface TelegramCallbackUpdate {
   callback_query?: {
+    id: string;
     data?: string;
     from?: { id: number };
     message?: { chat?: { id: number } };
@@ -23,6 +26,14 @@ const ACTION_TO_DECISION: Record<
   reject: ProposalStatus.REJECTED,
 };
 
+const DECISION_TOAST: Record<
+  ProposalStatus.APPROVED | ProposalStatus.REJECTED,
+  string
+> = {
+  [ProposalStatus.APPROVED]: 'Approved.',
+  [ProposalStatus.REJECTED]: 'Rejected.',
+};
+
 @Controller('approval')
 export class ApprovalController {
   private readonly logger = new Logger(ApprovalController.name);
@@ -30,25 +41,40 @@ export class ApprovalController {
   constructor(
     private readonly approvalService: ApprovalService,
     private readonly config: ConfigService,
+    private readonly http: HttpService,
   ) {}
 
   // Telegram webhook target. Always acknowledges (2xx) regardless of outcome
   // — a non-2xx response makes Telegram retry the same update repeatedly.
+  // Also answers the callback_query itself: without that, the tapped
+  // button's loading spinner never clears, which we found live — Telegram
+  // resends (or the user re-taps) a callback whose spinner never stopped,
+  // and the approval state machine has to reject the resulting duplicate.
   @Post('telegram-callback')
-  handleTelegramCallback(@Body() update: TelegramCallbackUpdate): { ok: true } {
+  async handleTelegramCallback(
+    @Body() update: TelegramCallbackUpdate,
+  ): Promise<{ ok: true }> {
+    let toast: string;
     try {
-      this.process(update);
+      toast = this.process(update);
     } catch (error) {
       // Expected failures (unknown proposal, already decided, deadline
-      // passed, wrong chat) land here — logged, not surfaced to Telegram.
+      // passed, wrong chat) land here — logged, not surfaced to Telegram
+      // beyond a generic toast.
       this.logger.warn(`Telegram callback not applied: ${String(error)}`);
+      toast = 'Already handled — no change made.';
+    }
+
+    const callbackQueryId = update.callback_query?.id;
+    if (callbackQueryId) {
+      await this.answerCallbackQuery(callbackQueryId, toast);
     }
     return { ok: true };
   }
 
-  private process(update: TelegramCallbackUpdate): void {
+  private process(update: TelegramCallbackUpdate): string {
     const query = update.callback_query;
-    if (!query?.data) return;
+    if (!query?.data) return '';
 
     const chatId = query.message?.chat?.id;
     const configuredChatId = this.config.get<string>('telegram.chatId');
@@ -64,5 +90,30 @@ export class ApprovalController {
 
     const decidedBy = query.from ? String(query.from.id) : String(chatId);
     this.approvalService.decide(proposalId, decision, decidedBy);
+    return DECISION_TOAST[decision];
+  }
+
+  // Clears the button's loading spinner and shows a small toast in
+  // Telegram. Best-effort — a failure here shouldn't fail the webhook
+  // response, since the actual decision has already been applied.
+  private async answerCallbackQuery(
+    callbackQueryId: string,
+    text: string,
+  ): Promise<void> {
+    const botToken = this.config.get<string>('telegram.botToken');
+    if (!botToken) return;
+
+    try {
+      await firstValueFrom(
+        this.http.post(
+          `https://api.telegram.org/bot${botToken}/answerCallbackQuery`,
+          { callback_query_id: callbackQueryId, text },
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to answer Telegram callback query: ${String(error)}`,
+      );
+    }
   }
 }
