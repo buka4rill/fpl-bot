@@ -17,6 +17,8 @@ describe('ProposalService', () => {
       finished: false,
     },
     squad: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    transfers: [],
+    hitCost: 0,
     startingXI: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
     benchGoalkeeperId: 12,
     benchOutfieldIds: [13, 14, 15],
@@ -86,5 +88,25 @@ describe('ProposalService', () => {
     expect(() =>
       service.updateStatus('nonexistent', ProposalStatus.APPROVED),
     ).toThrow('No proposal found');
+  });
+
+  it('carries transfers/hitCost through and nets the hit off expectedGain', async () => {
+    squadOptimizerService.optimizeSquad.mockResolvedValue({
+      ...optimization,
+      transfers: [{ playerOutId: 6, playerInId: 16 }],
+      hitCost: 4,
+    });
+
+    const proposal = await service.generateProposal();
+
+    expect(proposal.transfers).toEqual([{ playerOutId: 6, playerInId: 16 }]);
+    expect(proposal.hitCost).toBe(4);
+    expect(proposal.expectedGain).toBe(51.5); // 55.5 - 4
+  });
+
+  it('passes freeTransfers through to the optimizer', async () => {
+    await service.generateProposal(2);
+
+    expect(squadOptimizerService.optimizeSquad).toHaveBeenCalledWith(2);
   });
 });

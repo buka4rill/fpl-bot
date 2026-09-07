@@ -6,7 +6,9 @@ import { FplPublicClient } from './fpl-public.client';
 import {
   BootstrapStaticResponse,
   ElementSummaryResponse,
+  EntryPicksResponse,
   LiveGameweekResponse,
+  RawEntry,
   RawFixture,
 } from './fpl-api.types';
 
@@ -98,6 +100,43 @@ describe('FplPublicClient', () => {
 
     expect(httpService.get).toHaveBeenCalledWith(
       'https://fantasy.premierleague.com/api/event/3/live/',
+    );
+    expect(result).toBe(body);
+  });
+
+  it('fetches an entry', async () => {
+    const body: RawEntry = {
+      id: 1,
+      current_event: 3,
+      last_deadline_bank: 0,
+      last_deadline_value: 1000,
+    };
+    httpService.get.mockReturnValue(
+      of({ data: body } as AxiosResponse<RawEntry>),
+    );
+
+    const result = await client.getEntry(1);
+
+    expect(httpService.get).toHaveBeenCalledWith(
+      'https://fantasy.premierleague.com/api/entry/1/',
+    );
+    expect(result).toBe(body);
+  });
+
+  it('fetches entry picks for a gameweek', async () => {
+    const body: EntryPicksResponse = {
+      active_chip: null,
+      entry_history: { event: 3, bank: 0, value: 1000 },
+      picks: [],
+    };
+    httpService.get.mockReturnValue(
+      of({ data: body } as AxiosResponse<EntryPicksResponse>),
+    );
+
+    const result = await client.getEntryPicks(1, 3);
+
+    expect(httpService.get).toHaveBeenCalledWith(
+      'https://fantasy.premierleague.com/api/entry/1/event/3/picks/',
     );
     expect(result).toBe(body);
   });

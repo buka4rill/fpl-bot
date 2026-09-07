@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { FplPublicClient } from './clients/fpl-public.client';
 import { StatsProviderClient } from './clients/stats-provider.client';
 import {
+  CurrentSquad,
   Fixture,
   Gameweek,
   Player,
@@ -10,10 +11,13 @@ import {
   Team,
 } from '../common/types/domain.types';
 import { POSITION_BY_ELEMENT_TYPE } from '../common/enums/position.enum';
+import { FplChip } from '../common/enums/chip.enum';
 import {
   BootstrapStaticResponse,
   ElementSummaryResponse,
+  EntryPicksResponse,
   LiveGameweekResponse,
+  RawEntry,
   RawFixture,
 } from './clients/fpl-api.types';
 
@@ -55,6 +59,17 @@ export class IngestionService {
   // dictate the shape.
   getLiveGameweek(gameweek: number): Promise<LiveGameweekResponse> {
     return this.fplPublicClient.liveGameweek(gameweek);
+  }
+
+  // No `freeTransfers` on the result — the public API doesn't expose your
+  // accumulated free-transfer count. Callers that need it must supply it.
+  async getCurrentSquad(teamId: number): Promise<CurrentSquad> {
+    const entry = await this.fplPublicClient.getEntry(teamId);
+    const picks = await this.fplPublicClient.getEntryPicks(
+      teamId,
+      entry.current_event,
+    );
+    return this.normalizeCurrentSquad(entry, picks);
   }
 
   private normalizeBootstrap(raw: BootstrapStaticResponse): BootstrapSnapshot {
@@ -125,5 +140,23 @@ export class IngestionService {
       homeDifficulty: fixture.team_h_difficulty,
       awayDifficulty: fixture.team_a_difficulty,
     }));
+  }
+
+  private normalizeCurrentSquad(
+    entry: RawEntry,
+    picks: EntryPicksResponse,
+  ): CurrentSquad {
+    const activeChip = Object.values(FplChip).find(
+      (chip) => chip === picks.active_chip,
+    );
+
+    return {
+      teamId: entry.id,
+      gameweekId: picks.entry_history.event,
+      playerIds: picks.picks.map((pick) => pick.element),
+      bank: picks.entry_history.bank / 10,
+      teamValue: picks.entry_history.value / 10,
+      activeChip,
+    };
   }
 }

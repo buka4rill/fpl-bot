@@ -13,22 +13,27 @@ export class ProposalService {
 
   constructor(private readonly squadOptimizerService: SquadOptimizerService) {}
 
-  async generateProposal(): Promise<Proposal> {
-    const optimization = await this.squadOptimizerService.optimizeSquad();
+  // `freeTransfers` can't be derived from the public API (see CurrentSquad's
+  // doc comment) — passed through to SquadOptimizerService, which defaults
+  // it to the standard weekly amount if not given.
+  async generateProposal(freeTransfers?: number): Promise<Proposal> {
+    const optimization =
+      await this.squadOptimizerService.optimizeSquad(freeTransfers);
 
     const proposal: Proposal = {
       id: randomUUID(),
       gameweekId: optimization.targetGameweek.id,
       deadlineAt: optimization.targetGameweek.deadlineAt,
-      // No current-squad ingestion yet (entry/picks endpoints) — this is a
-      // from-scratch squad recommendation, not a diff against an existing
-      // team, so there's nothing to compute transfers or a hit cost from.
-      transfers: [],
+      transfers: optimization.transfers,
       lineup: optimization.startingXI,
       captainId: optimization.captainId,
       viceCaptainId: optimization.viceCaptainId,
-      expectedGain: optimization.totalPredictedPoints,
-      hitCost: 0,
+      // Net of hit cost — "how many more points is this plan expected to
+      // earn." Not a delta against the current squad's own predicted points
+      // (that would need re-running the lineup selection on the unchanged
+      // squad too); this is the new plan's own expected total.
+      expectedGain: optimization.totalPredictedPoints - optimization.hitCost,
+      hitCost: optimization.hitCost,
       status: ProposalStatus.PENDING,
       createdAt: new Date().toISOString(),
     };

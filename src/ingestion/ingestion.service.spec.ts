@@ -5,10 +5,13 @@ import { StatsProviderClient } from './clients/stats-provider.client';
 import {
   BootstrapStaticResponse,
   ElementSummaryResponse,
+  EntryPicksResponse,
   LiveGameweekResponse,
+  RawEntry,
   RawFixture,
 } from './clients/fpl-api.types';
 import { Position } from '../common/enums/position.enum';
+import { FplChip } from '../common/enums/chip.enum';
 
 describe('IngestionService', () => {
   let service: IngestionService;
@@ -17,6 +20,8 @@ describe('IngestionService', () => {
     fixtures: jest.Mock;
     elementSummary: jest.Mock;
     liveGameweek: jest.Mock;
+    getEntry: jest.Mock;
+    getEntryPicks: jest.Mock;
   };
 
   const rawBootstrap: BootstrapStaticResponse = {
@@ -78,6 +83,8 @@ describe('IngestionService', () => {
       fixtures: jest.fn(),
       elementSummary: jest.fn(),
       liveGameweek: jest.fn(),
+      getEntry: jest.fn(),
+      getEntryPicks: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -274,5 +281,55 @@ describe('IngestionService', () => {
 
     expect(fplPublicClient.liveGameweek).toHaveBeenCalledWith(3);
     expect(result).toBe(raw);
+  });
+
+  it('normalizes the current squad from entry + picks', async () => {
+    const rawEntry: RawEntry = {
+      id: 42,
+      current_event: 3,
+      last_deadline_bank: 0,
+      last_deadline_value: 1000,
+    };
+    const rawPicks: EntryPicksResponse = {
+      active_chip: 'bboost',
+      entry_history: { event: 3, bank: 5, value: 1005 },
+      picks: [
+        { element: 1, element_type: 1 },
+        { element: 2, element_type: 2 },
+      ],
+    };
+    fplPublicClient.getEntry.mockResolvedValue(rawEntry);
+    fplPublicClient.getEntryPicks.mockResolvedValue(rawPicks);
+
+    const squad = await service.getCurrentSquad(42);
+
+    expect(fplPublicClient.getEntry).toHaveBeenCalledWith(42);
+    expect(fplPublicClient.getEntryPicks).toHaveBeenCalledWith(42, 3);
+    expect(squad).toEqual({
+      teamId: 42,
+      gameweekId: 3,
+      playerIds: [1, 2],
+      bank: 0.5,
+      teamValue: 100.5,
+      activeChip: FplChip.BENCH_BOOST,
+    });
+  });
+
+  it('leaves activeChip undefined when no chip is active', async () => {
+    fplPublicClient.getEntry.mockResolvedValue({
+      id: 42,
+      current_event: 3,
+      last_deadline_bank: 0,
+      last_deadline_value: 1000,
+    });
+    fplPublicClient.getEntryPicks.mockResolvedValue({
+      active_chip: null,
+      entry_history: { event: 3, bank: 0, value: 1000 },
+      picks: [],
+    });
+
+    const squad = await service.getCurrentSquad(42);
+
+    expect(squad.activeChip).toBeUndefined();
   });
 });

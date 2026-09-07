@@ -117,3 +117,31 @@ export interface RawLiveElement {
 export interface LiveGameweekResponse {
   elements: RawLiveElement[];
 }
+
+// GET /api/entry/{teamId}/ — captured 2026-09-07.
+export interface RawEntry {
+  id: number;
+  current_event: number;
+  last_deadline_bank: number; // tenths of £m
+  last_deadline_value: number; // tenths of £m
+}
+
+// GET /api/entry/{teamId}/event/{gw}/picks/ — captured 2026-09-07. No
+// selling_price per pick — that's only exposed by the authenticated
+// my-team endpoint, which IngestionModule deliberately doesn't touch.
+export interface RawPick {
+  element: number;
+  element_type: number;
+}
+
+export interface RawEntryHistory {
+  event: number;
+  bank: number; // tenths of £m
+  value: number; // tenths of £m
+}
+
+export interface EntryPicksResponse {
+  active_chip: string | null;
+  entry_history: RawEntryHistory;
+  picks: RawPick[];
+}

@@ -78,6 +78,21 @@ export interface SquadRules {
   positions: PositionRules[];
 }
 
+// Your currently-owned squad, from the public entry/picks endpoints — no
+// login needed. `freeTransfers` is deliberately absent: the public API
+// doesn't expose your accumulated free-transfer count (that needs the
+// authenticated my-team endpoint, or reconstructing it from transfer
+// history across every gameweek since the last wildcard/reset). Callers
+// that need it must supply it themselves.
+export interface CurrentSquad {
+  teamId: number;
+  gameweekId: number; // the gameweek this snapshot reflects (entry.current_event)
+  playerIds: number[]; // 15 owned player IDs
+  bank: number; // £m
+  teamValue: number; // £m — total squad value per FPL's own accounting
+  activeChip?: FplChip;
+}
+
 export interface TransferPlan {
   playerOutId: number;
   playerInId: number;

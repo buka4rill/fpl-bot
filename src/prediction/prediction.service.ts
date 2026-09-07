@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
 import {
+  CurrentSquad,
   Fixture,
   Gameweek,
   Player,
@@ -13,6 +15,9 @@ export interface PredictionResult {
   players: Player[];
   rules: SquadRules;
   targetGameweek: Gameweek;
+  // Undefined when FPL_TEAM_ID isn't configured — a from-scratch
+  // recommendation is still valid without a team to compare against.
+  currentSquad?: CurrentSquad;
   predictions: PlayerSnapshot[];
 }
 
@@ -21,6 +26,7 @@ export class PredictionService {
   constructor(
     private readonly strategy: HeuristicStrategy,
     private readonly ingestionService: IngestionService,
+    private readonly config: ConfigService,
   ) {}
 
   async predictGameweek(): Promise<PredictionResult> {
@@ -39,13 +45,18 @@ export class PredictionService {
       );
     }
 
+    const teamId = this.config.get<string>('fpl.teamId');
+    const currentSquad = teamId
+      ? await this.ingestionService.getCurrentSquad(Number(teamId))
+      : undefined;
+
     const enriched = this.withNextFixtureDifficulty(
       players,
       snapshots,
       fixtures,
     );
     const predictions = await this.strategy.predict(enriched);
-    return { players, rules, targetGameweek, predictions };
+    return { players, rules, targetGameweek, currentSquad, predictions };
   }
 
   private withNextFixtureDifficulty(

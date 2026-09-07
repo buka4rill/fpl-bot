@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { SquadOptimizerService } from './squad-optimizer.service';
 import { PredictionService } from '../prediction/prediction.service';
 import {
+  CurrentSquad,
   Gameweek,
   Player,
   PlayerSnapshot,
@@ -45,11 +46,16 @@ describe('SquadOptimizerService', () => {
     players: Player[],
     predictions: PlayerSnapshot[],
     rules: SquadRules,
+    currentSquad?: CurrentSquad,
   ) => {
     predictionService = {
-      predictGameweek: jest
-        .fn()
-        .mockResolvedValue({ players, rules, targetGameweek, predictions }),
+      predictGameweek: jest.fn().mockResolvedValue({
+        players,
+        rules,
+        targetGameweek,
+        currentSquad,
+        predictions,
+      }),
     };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -120,6 +126,8 @@ describe('SquadOptimizerService', () => {
     expect(result.captainId).toBe(11); // highest predicted points (8)
     expect(result.viceCaptainId).toBe(8); // second highest (7)
     expect(result.totalPredictedPoints).toBe(38);
+    expect(result.transfers).toEqual([]);
+    expect(result.hitCost).toBe(0);
   });
 
   it('excludes an otherwise-better player when it would breach the club limit', async () => {
@@ -218,5 +226,95 @@ describe('SquadOptimizerService', () => {
     await expect(service.optimizeSquad()).rejects.toThrow(
       'No feasible squad found',
     );
+  });
+
+  describe('with a current squad', () => {
+    // Same 8-slot shape as toyRules: 2 GKP, 3 DEF, 2 MID, 1 FWD. Prices sum
+    // to exactly 40 (5+4+5+5+4+6+5+6), matching ownedSquad's teamValue below.
+    const players = [
+      player(1, Position.GKP, 101),
+      player(2, Position.GKP, 102),
+      player(4, Position.DEF, 104),
+      player(5, Position.DEF, 105),
+      player(6, Position.DEF, 106), // currently owned, weakest DEF at 4 pts
+      player(8, Position.MID, 108),
+      player(9, Position.MID, 109),
+      player(11, Position.FWD, 111),
+    ];
+    const predictions = [
+      snapshot(1, 5, 6),
+      snapshot(2, 4, 5),
+      snapshot(4, 5, 6),
+      snapshot(5, 5, 5),
+      snapshot(6, 4, 4),
+      snapshot(8, 6, 7),
+      snapshot(9, 5, 6),
+      snapshot(11, 6, 8),
+    ];
+    const ownedSquad: CurrentSquad = {
+      teamId: 1,
+      gameweekId: 3,
+      playerIds: [1, 2, 4, 5, 6, 8, 9, 11],
+      bank: 0,
+      teamValue: 40,
+    };
+
+    it('uses bank + team value as the budget, not rules.budget', async () => {
+      // rules.budget alone (1) would make even the current squad infeasible.
+      const tightRules = { ...toyRules, budget: 1 };
+      await setup(players, predictions, tightRules, ownedSquad);
+
+      const result = await service.optimizeSquad(0);
+
+      expect(new Set(result.squad)).toEqual(new Set(ownedSquad.playerIds));
+    });
+
+    it('keeps the current player when the upgrade is not worth the transfer hit', async () => {
+      const candidates = [...players, player(13, Position.DEF, 113)];
+      const candidatePredictions = [
+        ...predictions,
+        snapshot(13, 4, 4.5), // only +0.5 over player 6's 4 pts, same price
+      ];
+      await setup(candidates, candidatePredictions, toyRules, ownedSquad);
+
+      const result = await service.optimizeSquad(0); // no free transfers
+
+      expect(result.squad).toContain(6);
+      expect(result.squad).not.toContain(13);
+      expect(result.transfers).toEqual([]);
+      expect(result.hitCost).toBe(0);
+    });
+
+    it('takes the hit when the upgrade is worth more than the transfer cost', async () => {
+      const candidates = [...players, player(14, Position.DEF, 114)];
+      const candidatePredictions = [
+        ...predictions,
+        snapshot(14, 4, 10), // +6 over player 6's 4 pts, same price
+      ];
+      await setup(candidates, candidatePredictions, toyRules, ownedSquad);
+
+      const result = await service.optimizeSquad(0); // no free transfers
+
+      expect(result.squad).toContain(14);
+      expect(result.squad).not.toContain(6);
+      expect(result.transfers).toEqual([{ playerOutId: 6, playerInId: 14 }]);
+      expect(result.hitCost).toBe(4);
+    });
+
+    it('does not charge a hit for a transfer within the free allowance', async () => {
+      const candidates = [...players, player(13, Position.DEF, 113)];
+      const candidatePredictions = [
+        ...predictions,
+        snapshot(13, 4, 4.5), // any positive gain is worth a FREE transfer
+      ];
+      await setup(candidates, candidatePredictions, toyRules, ownedSquad);
+
+      const result = await service.optimizeSquad(1); // 1 free transfer
+
+      expect(result.squad).toContain(13);
+      expect(result.squad).not.toContain(6);
+      expect(result.transfers).toEqual([{ playerOutId: 6, playerInId: 13 }]);
+      expect(result.hitCost).toBe(0);
+    });
   });
 });

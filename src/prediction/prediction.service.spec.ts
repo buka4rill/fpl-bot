@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { PredictionService } from './prediction.service';
 import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
 import {
+  CurrentSquad,
   Fixture,
   Gameweek,
   Player,
@@ -16,8 +18,10 @@ describe('PredictionService', () => {
   let ingestionService: {
     getBootstrapSnapshot: jest.Mock;
     getFixtures: jest.Mock;
+    getCurrentSquad: jest.Mock;
   };
   let strategy: { predict: jest.Mock };
+  let config: { get: jest.Mock };
 
   const players: Player[] = [
     {
@@ -111,16 +115,21 @@ describe('PredictionService', () => {
         .fn()
         .mockResolvedValue({ players, snapshots, rules, gameweeks }),
       getFixtures: jest.fn().mockResolvedValue(fixtures),
+      getCurrentSquad: jest.fn(),
     };
     strategy = {
       predict: jest.fn().mockImplementation((s) => Promise.resolve(s)),
     };
+    // No FPL_TEAM_ID configured by default — most tests don't care about
+    // the current-squad path.
+    config = { get: jest.fn().mockReturnValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PredictionService,
         { provide: HeuristicStrategy, useValue: strategy },
         { provide: IngestionService, useValue: ingestionService },
+        { provide: ConfigService, useValue: config },
       ],
     }).compile();
 
@@ -147,6 +156,30 @@ describe('PredictionService', () => {
     expect(result.rules).toBe(rules);
     expect(result.targetGameweek).toEqual(gameweeks[1]); // isNext
     expect(result.predictions).toBe(predicted);
+  });
+
+  it('leaves currentSquad undefined when no FPL_TEAM_ID is configured', async () => {
+    const result = await service.predictGameweek();
+
+    expect(ingestionService.getCurrentSquad).not.toHaveBeenCalled();
+    expect(result.currentSquad).toBeUndefined();
+  });
+
+  it('fetches the current squad when FPL_TEAM_ID is configured', async () => {
+    config.get.mockReturnValue('42');
+    const currentSquad: CurrentSquad = {
+      teamId: 42,
+      gameweekId: 3,
+      playerIds: [1, 2, 3],
+      bank: 0,
+      teamValue: 100,
+    };
+    ingestionService.getCurrentSquad.mockResolvedValue(currentSquad);
+
+    const result = await service.predictGameweek();
+
+    expect(ingestionService.getCurrentSquad).toHaveBeenCalledWith(42);
+    expect(result.currentSquad).toBe(currentSquad);
   });
 
   it('throws when bootstrap-static has no upcoming gameweek', async () => {

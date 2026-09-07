@@ -4,7 +4,9 @@ import { firstValueFrom } from 'rxjs';
 import {
   BootstrapStaticResponse,
   ElementSummaryResponse,
+  EntryPicksResponse,
   LiveGameweekResponse,
+  RawEntry,
   RawFixture,
 } from './fpl-api.types';
 
@@ -47,6 +49,25 @@ export class FplPublicClient {
     const { data } = await firstValueFrom(
       this.http.get<LiveGameweekResponse>(
         `${this.baseUrl}/event/${gameweek}/live/`,
+      ),
+    );
+    return data;
+  }
+
+  async getEntry(teamId: number): Promise<RawEntry> {
+    const { data } = await firstValueFrom(
+      this.http.get<RawEntry>(`${this.baseUrl}/entry/${teamId}/`),
+    );
+    return data;
+  }
+
+  async getEntryPicks(
+    teamId: number,
+    gameweek: number,
+  ): Promise<EntryPicksResponse> {
+    const { data } = await firstValueFrom(
+      this.http.get<EntryPicksResponse>(
+        `${this.baseUrl}/entry/${teamId}/event/${gameweek}/picks/`,
       ),
     );
     return data;
