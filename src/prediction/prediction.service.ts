@@ -3,6 +3,7 @@ import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
 import {
   Fixture,
+  Gameweek,
   Player,
   PlayerSnapshot,
   SquadRules,
@@ -11,6 +12,7 @@ import {
 export interface PredictionResult {
   players: Player[];
   rules: SquadRules;
+  targetGameweek: Gameweek;
   predictions: PlayerSnapshot[];
 }
 
@@ -22,10 +24,20 @@ export class PredictionService {
   ) {}
 
   async predictGameweek(): Promise<PredictionResult> {
-    const [{ players, snapshots, rules }, fixtures] = await Promise.all([
-      this.ingestionService.getBootstrapSnapshot(),
-      this.ingestionService.getFixtures(),
-    ]);
+    const [{ players, snapshots, rules, gameweeks }, fixtures] =
+      await Promise.all([
+        this.ingestionService.getBootstrapSnapshot(),
+        this.ingestionService.getFixtures(),
+      ]);
+
+    const targetGameweek = gameweeks.find((gameweek) => gameweek.isNext);
+    if (!targetGameweek) {
+      // Nothing actionable to propose a change for — don't fabricate a
+      // deadline by falling back to the current (already locked) gameweek.
+      throw new Error(
+        'No upcoming gameweek found in bootstrap-static (is_next missing).',
+      );
+    }
 
     const enriched = this.withNextFixtureDifficulty(
       players,
@@ -33,7 +45,7 @@ export class PredictionService {
       fixtures,
     );
     const predictions = await this.strategy.predict(enriched);
-    return { players, rules, predictions };
+    return { players, rules, targetGameweek, predictions };
   }
 
   private withNextFixtureDifficulty(

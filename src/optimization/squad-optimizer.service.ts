@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import solver, { Model, SolveResult } from 'javascript-lp-solver';
 import { PredictionService } from '../prediction/prediction.service';
 import {
+  Gameweek,
   Player,
   PlayerSnapshot,
   SquadRules,
@@ -9,6 +10,7 @@ import {
 import { Position } from '../common/enums/position.enum';
 
 export interface SquadOptimizationResult {
+  targetGameweek: Gameweek;
   squad: number[]; // all 15 player IDs
   startingXI: number[]; // 11 player IDs
   benchGoalkeeperId: number;
@@ -28,7 +30,7 @@ export class SquadOptimizerService {
   constructor(private readonly predictionService: PredictionService) {}
 
   async optimizeSquad(): Promise<SquadOptimizationResult> {
-    const { players, rules, predictions } =
+    const { players, rules, targetGameweek, predictions } =
       await this.predictionService.predictGameweek();
 
     const playerById = new Map(players.map((p) => [p.id, p]));
@@ -44,7 +46,7 @@ export class SquadOptimizerService {
       rules,
     );
 
-    return { squad, ...lineup };
+    return { targetGameweek, squad, ...lineup };
   }
 
   // Stage 1 — ILP over every player: pick the 15-man squad maximizing total

@@ -86,6 +86,7 @@ export interface TransferPlan {
 export interface Proposal {
   id: string;
   gameweekId: number;
+  deadlineAt: string; // ISO timestamp — the gameweek deadline this must be actioned before
   transfers: TransferPlan[];
   lineup: number[]; // starting XI player IDs
   captainId: number;

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { SquadOptimizerService } from './squad-optimizer.service';
 import { PredictionService } from '../prediction/prediction.service';
 import {
+  Gameweek,
   Player,
   PlayerSnapshot,
   SquadRules,
@@ -32,6 +33,14 @@ describe('SquadOptimizerService', () => {
     predictedPoints,
   });
 
+  const targetGameweek: Gameweek = {
+    id: 4,
+    deadlineAt: '2026-09-12T12:30:00Z',
+    isCurrent: false,
+    isNext: true,
+    finished: false,
+  };
+
   const setup = async (
     players: Player[],
     predictions: PlayerSnapshot[],
@@ -40,7 +49,7 @@ describe('SquadOptimizerService', () => {
     predictionService = {
       predictGameweek: jest
         .fn()
-        .mockResolvedValue({ players, rules, predictions }),
+        .mockResolvedValue({ players, rules, targetGameweek, predictions }),
     };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -102,6 +111,7 @@ describe('SquadOptimizerService', () => {
 
     const result = await service.optimizeSquad();
 
+    expect(result.targetGameweek).toBe(targetGameweek);
     expect(new Set(result.squad)).toEqual(new Set([1, 2, 4, 5, 6, 8, 9, 11]));
     // Only valid formation given maxStarting caps is 2 DEF + 2 MID + 1 FWD.
     expect(result.startingXI).toEqual([1, 4, 5, 8, 9, 11]);

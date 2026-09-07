@@ -4,6 +4,7 @@ import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
 import {
   Fixture,
+  Gameweek,
   Player,
   PlayerSnapshot,
   SquadRules,
@@ -74,6 +75,23 @@ describe('PredictionService', () => {
     // team 2 has no upcoming fixture (blank gameweek) — not included here
   ];
 
+  const gameweeks: Gameweek[] = [
+    {
+      id: 3,
+      deadlineAt: '2026-09-04T17:30:00Z',
+      isCurrent: true,
+      isNext: false,
+      finished: false,
+    },
+    {
+      id: 4,
+      deadlineAt: '2026-09-12T12:30:00Z',
+      isCurrent: false,
+      isNext: true,
+      finished: false,
+    },
+  ];
+
   const rules: SquadRules = {
     squadSize: 15,
     startingSize: 11,
@@ -91,7 +109,7 @@ describe('PredictionService', () => {
     ingestionService = {
       getBootstrapSnapshot: jest
         .fn()
-        .mockResolvedValue({ players, snapshots, rules }),
+        .mockResolvedValue({ players, snapshots, rules, gameweeks }),
       getFixtures: jest.fn().mockResolvedValue(fixtures),
     };
     strategy = {
@@ -119,7 +137,7 @@ describe('PredictionService', () => {
     ]);
   });
 
-  it('returns players, rules, and whatever the strategy produces', async () => {
+  it('returns players, rules, the next gameweek, and whatever the strategy produces', async () => {
     const predicted = [{ ...snapshots[0], predictedPoints: 5 }];
     strategy.predict.mockResolvedValue(predicted);
 
@@ -127,6 +145,20 @@ describe('PredictionService', () => {
 
     expect(result.players).toBe(players);
     expect(result.rules).toBe(rules);
+    expect(result.targetGameweek).toEqual(gameweeks[1]); // isNext
     expect(result.predictions).toBe(predicted);
+  });
+
+  it('throws when bootstrap-static has no upcoming gameweek', async () => {
+    ingestionService.getBootstrapSnapshot.mockResolvedValue({
+      players,
+      snapshots,
+      rules,
+      gameweeks: gameweeks.map((g) => ({ ...g, isNext: false })),
+    });
+
+    await expect(service.predictGameweek()).rejects.toThrow(
+      'No upcoming gameweek',
+    );
   });
 });
