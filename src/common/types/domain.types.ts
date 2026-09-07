@@ -29,6 +29,17 @@ export interface Player {
   position: Position;
 }
 
+export interface Fixture {
+  id: number;
+  gameweekId: number | null; // null when not yet scheduled (blank gameweek)
+  homeTeamId: number;
+  awayTeamId: number;
+  kickoffAt: string | null; // ISO timestamp, null until scheduled
+  finished: boolean;
+  homeDifficulty: number;
+  awayDifficulty: number;
+}
+
 export interface PlayerSnapshot {
   gameweekId: number;
   playerId: number;

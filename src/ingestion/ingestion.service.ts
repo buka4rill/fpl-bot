@@ -2,13 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { FplPublicClient } from './clients/fpl-public.client';
 import { StatsProviderClient } from './clients/stats-provider.client';
 import {
+  Fixture,
   Gameweek,
   Player,
   PlayerSnapshot,
   Team,
 } from '../common/types/domain.types';
 import { POSITION_BY_ELEMENT_TYPE } from '../common/enums/position.enum';
-import { BootstrapStaticResponse } from './clients/fpl-api.types';
+import {
+  BootstrapStaticResponse,
+  ElementSummaryResponse,
+  RawFixture,
+} from './clients/fpl-api.types';
 
 export interface BootstrapSnapshot {
   gameweeks: Gameweek[];
@@ -27,6 +32,18 @@ export class IngestionService {
   async getBootstrapSnapshot(): Promise<BootstrapSnapshot> {
     const raw = await this.fplPublicClient.bootstrapStatic();
     return this.normalizeBootstrap(raw);
+  }
+
+  async getFixtures(gameweek?: number): Promise<Fixture[]> {
+    const raw = await this.fplPublicClient.fixtures(gameweek);
+    return this.normalizeFixtures(raw);
+  }
+
+  // Per-player upcoming fixtures + recent-gameweek history. Not normalized
+  // into a domain type yet — the useful shape depends on how PredictionModule
+  // ends up consuming form/minutes-risk, which isn't decided.
+  getElementSummary(playerId: number): Promise<ElementSummaryResponse> {
+    return this.fplPublicClient.elementSummary(playerId);
   }
 
   private normalizeBootstrap(raw: BootstrapStaticResponse): BootstrapSnapshot {
@@ -67,5 +84,18 @@ export class IngestionService {
     }));
 
     return { gameweeks, teams, players, snapshots };
+  }
+
+  private normalizeFixtures(raw: RawFixture[]): Fixture[] {
+    return raw.map((fixture) => ({
+      id: fixture.id,
+      gameweekId: fixture.event,
+      homeTeamId: fixture.team_h,
+      awayTeamId: fixture.team_a,
+      kickoffAt: fixture.kickoff_time,
+      finished: fixture.finished,
+      homeDifficulty: fixture.team_h_difficulty,
+      awayDifficulty: fixture.team_a_difficulty,
+    }));
   }
 }

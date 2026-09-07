@@ -42,3 +42,41 @@ export interface BootstrapStaticResponse {
   element_types: RawElementType[];
   elements: RawElement[];
 }
+
+// GET /api/fixtures/?event={gw} — captured 2026-09-07.
+export interface RawFixture {
+  id: number;
+  event: number | null; // null when not yet scheduled (blank gameweek)
+  team_h: number;
+  team_a: number;
+  kickoff_time: string | null;
+  finished: boolean;
+  team_h_difficulty: number;
+  team_a_difficulty: number;
+}
+
+// GET /api/element-summary/{id}/ — captured 2026-09-07. `history_past`
+// (prior-season totals) is omitted; nothing here needs multi-season data yet.
+export interface RawElementSummaryFixture {
+  id: number;
+  event: number | null;
+  is_home: boolean;
+  difficulty: number;
+  kickoff_time: string | null;
+}
+
+export interface RawElementSummaryHistory {
+  element: number;
+  fixture: number;
+  opponent_team: number;
+  round: number;
+  was_home: boolean;
+  kickoff_time: string;
+  total_points: number;
+  minutes: number;
+}
+
+export interface ElementSummaryResponse {
+  fixtures: RawElementSummaryFixture[];
+  history: RawElementSummaryHistory[];
+}
