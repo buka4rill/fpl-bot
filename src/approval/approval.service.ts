@@ -1,19 +1,29 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ApprovalStateMachine } from './approval.state-machine';
 import { ProposalService } from '../proposal/proposal.service';
-import { Approval } from '../common/types/domain.types';
+import { ExecutionService } from '../execution/execution.service';
+import { AlertService } from '../alert/alert.service';
+import { Approval, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
 type Decision = ProposalStatus.APPROVED | ProposalStatus.REJECTED;
 
 @Injectable()
 export class ApprovalService {
+  private readonly logger = new Logger(ApprovalService.name);
+
   constructor(
     private readonly stateMachine: ApprovalStateMachine,
     private readonly proposalService: ProposalService,
+    private readonly executionService: ExecutionService,
+    private readonly alertService: AlertService,
   ) {}
 
-  decide(proposalId: string, decision: Decision, decidedBy: string): Approval {
+  async decide(
+    proposalId: string,
+    decision: Decision,
+    decidedBy: string,
+  ): Promise<Approval> {
     const proposal = this.proposalService.findById(proposalId);
     if (!proposal) {
       throw new Error(`No proposal found with id ${proposalId}.`);
@@ -29,7 +39,14 @@ export class ApprovalService {
     }
 
     this.stateMachine.assertTransition(proposal.status, decision);
-    this.proposalService.updateStatus(proposalId, decision);
+    const updated = this.proposalService.updateStatus(proposalId, decision);
+
+    if (decision === ProposalStatus.APPROVED) {
+      // Best-effort: an execution failure shouldn't undo the recorded
+      // approval — it's surfaced loudly via Telegram instead (ARCHITECTURE.md
+      // §10), and the caller (Telegram webhook) still gets a clean response.
+      await this.applyApproved(updated);
+    }
 
     return {
       proposalId,
@@ -37,6 +54,22 @@ export class ApprovalService {
       decision,
       decidedAt: new Date().toISOString(),
     };
+  }
+
+  private async applyApproved(proposal: Proposal): Promise<void> {
+    try {
+      await this.executionService.apply(proposal);
+      await this.alertService.sendExecutionResult(proposal, true);
+    } catch (error) {
+      this.logger.error(
+        `Execution failed for proposal ${proposal.id}: ${String(error)}`,
+      );
+      await this.alertService.sendExecutionResult(
+        proposal,
+        false,
+        String(error),
+      );
+    }
   }
 
   // Idempotent — safe to call on a proposal that's already terminal (no-op).

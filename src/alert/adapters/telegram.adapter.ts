@@ -32,4 +32,14 @@ export class TelegramAdapter {
       ...keyboard,
     });
   }
+
+  async sendMessage(text: string): Promise<void> {
+    if (!this.bot) {
+      this.logger.warn('TELEGRAM_BOT_TOKEN not configured — skipping send.');
+      return;
+    }
+    await this.bot.telegram.sendMessage(this.chatId, text, {
+      parse_mode: 'Markdown',
+    });
+  }
 }

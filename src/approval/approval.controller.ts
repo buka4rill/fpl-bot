@@ -56,7 +56,7 @@ export class ApprovalController {
   ): Promise<{ ok: true }> {
     let toast: string;
     try {
-      toast = this.process(update);
+      toast = await this.process(update);
     } catch (error) {
       // Expected failures (unknown proposal, already decided, deadline
       // passed, wrong chat) land here — logged, not surfaced to Telegram
@@ -72,7 +72,7 @@ export class ApprovalController {
     return { ok: true };
   }
 
-  private process(update: TelegramCallbackUpdate): string {
+  private async process(update: TelegramCallbackUpdate): Promise<string> {
     const query = update.callback_query;
     if (!query?.data) return '';
 
@@ -89,7 +89,7 @@ export class ApprovalController {
     }
 
     const decidedBy = query.from ? String(query.from.id) : String(chatId);
-    this.approvalService.decide(proposalId, decision, decidedBy);
+    await this.approvalService.decide(proposalId, decision, decidedBy);
     return DECISION_TOAST[decision];
   }
 

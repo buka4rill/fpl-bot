@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ApprovalService } from './approval.service';
 import { ApprovalStateMachine } from './approval.state-machine';
 import { ProposalService } from '../proposal/proposal.service';
+import { ExecutionService } from '../execution/execution.service';
+import { AlertService } from '../alert/alert.service';
 import { Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
@@ -12,6 +14,8 @@ describe('ApprovalService', () => {
     findAllPending: jest.Mock;
     updateStatus: jest.Mock;
   };
+  let executionService: { apply: jest.Mock };
+  let alertService: { sendExecutionResult: jest.Mock };
 
   const baseProposal = (overrides: Partial<Proposal> = {}): Proposal => ({
     id: 'p1',
@@ -19,6 +23,8 @@ describe('ApprovalService', () => {
     deadlineAt: '2099-01-01T00:00:00Z', // far future — not overdue
     transfers: [],
     lineup: [],
+    benchGoalkeeperId: 12,
+    benchOutfieldIds: [13, 14, 15],
     captainId: 1,
     viceCaptainId: 2,
     expectedGain: 10,
@@ -32,7 +38,17 @@ describe('ApprovalService', () => {
     proposalService = {
       findById: jest.fn(),
       findAllPending: jest.fn().mockReturnValue([]),
-      updateStatus: jest.fn(),
+      updateStatus: jest
+        .fn()
+        .mockImplementation((id: string, status: ProposalStatus) =>
+          baseProposal({ id, status }),
+        ),
+    };
+    executionService = {
+      apply: jest.fn().mockResolvedValue({ success: true }),
+    };
+    alertService = {
+      sendExecutionResult: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -40,6 +56,8 @@ describe('ApprovalService', () => {
         ApprovalService,
         ApprovalStateMachine,
         { provide: ProposalService, useValue: proposalService },
+        { provide: ExecutionService, useValue: executionService },
+        { provide: AlertService, useValue: alertService },
       ],
     }).compile();
 
@@ -47,10 +65,14 @@ describe('ApprovalService', () => {
   });
 
   describe('decide', () => {
-    it('approves a PENDING proposal before the deadline', () => {
+    it('approves a PENDING proposal before the deadline', async () => {
       proposalService.findById.mockReturnValue(baseProposal());
 
-      const approval = service.decide('p1', ProposalStatus.APPROVED, 'user1');
+      const approval = await service.decide(
+        'p1',
+        ProposalStatus.APPROVED,
+        'user1',
+      );
 
       expect(proposalService.updateStatus).toHaveBeenCalledWith(
         'p1',
@@ -62,33 +84,64 @@ describe('ApprovalService', () => {
       expect(approval.decidedAt).toBeTruthy();
     });
 
-    it('rejects a PENDING proposal before the deadline', () => {
+    it('triggers execution and a success alert once approved', async () => {
       proposalService.findById.mockReturnValue(baseProposal());
 
-      service.decide('p1', ProposalStatus.REJECTED, 'user1');
+      await service.decide('p1', ProposalStatus.APPROVED, 'user1');
+
+      expect(executionService.apply).toHaveBeenCalled();
+      expect(alertService.sendExecutionResult).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'p1' }),
+        true,
+      );
+    });
+
+    it('alerts loudly instead of throwing when execution fails', async () => {
+      proposalService.findById.mockReturnValue(baseProposal());
+      executionService.apply.mockRejectedValue(new Error('FPL API down'));
+
+      const approval = await service.decide(
+        'p1',
+        ProposalStatus.APPROVED,
+        'user1',
+      );
+
+      expect(approval.decision).toBe(ProposalStatus.APPROVED);
+      expect(alertService.sendExecutionResult).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'p1' }),
+        false,
+        expect.stringContaining('FPL API down'),
+      );
+    });
+
+    it('rejects a PENDING proposal before the deadline', async () => {
+      proposalService.findById.mockReturnValue(baseProposal());
+
+      await service.decide('p1', ProposalStatus.REJECTED, 'user1');
 
       expect(proposalService.updateStatus).toHaveBeenCalledWith(
         'p1',
         ProposalStatus.REJECTED,
       );
+      expect(executionService.apply).not.toHaveBeenCalled();
     });
 
-    it('throws for an unknown proposal', () => {
+    it('throws for an unknown proposal', async () => {
       proposalService.findById.mockReturnValue(undefined);
 
-      expect(() =>
+      await expect(
         service.decide('missing', ProposalStatus.APPROVED, 'user1'),
-      ).toThrow('No proposal found');
+      ).rejects.toThrow('No proposal found');
     });
 
-    it('expires (not approves) a reply that arrives after the deadline', () => {
+    it('expires (not approves) a reply that arrives after the deadline', async () => {
       proposalService.findById.mockReturnValue(
         baseProposal({ deadlineAt: '2000-01-01T00:00:00Z' }),
       );
 
-      expect(() =>
+      await expect(
         service.decide('p1', ProposalStatus.APPROVED, 'user1'),
-      ).toThrow('Deadline has already passed');
+      ).rejects.toThrow('Deadline has already passed');
 
       expect(proposalService.updateStatus).toHaveBeenCalledWith(
         'p1',
@@ -100,14 +153,14 @@ describe('ApprovalService', () => {
       );
     });
 
-    it('refuses to re-decide an already-terminal proposal', () => {
+    it('refuses to re-decide an already-terminal proposal', async () => {
       proposalService.findById.mockReturnValue(
         baseProposal({ status: ProposalStatus.APPROVED }),
       );
 
-      expect(() =>
+      await expect(
         service.decide('p1', ProposalStatus.REJECTED, 'user1'),
-      ).toThrow('Cannot transition');
+      ).rejects.toThrow('Cannot transition');
     });
   });
 

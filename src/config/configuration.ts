@@ -1,8 +1,7 @@
 export interface AppConfig {
   fpl: {
     teamId: string;
-    email: string;
-    password: string;
+    refreshToken: string;
   };
   telegram: {
     botToken: string;
@@ -16,8 +15,7 @@ export interface AppConfig {
 export default (): AppConfig => ({
   fpl: {
     teamId: process.env.FPL_TEAM_ID ?? '',
-    email: process.env.FPL_EMAIL ?? '',
-    password: process.env.FPL_PASSWORD ?? '',
+    refreshToken: process.env.FPL_REFRESH_TOKEN ?? '',
   },
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',

@@ -20,8 +20,7 @@ export class ProposalService {
     const optimization =
       await this.squadOptimizerService.optimizeSquad(freeTransfers);
 
-    const proposal: Proposal = {
-      id: randomUUID(),
+    return this.store({
       gameweekId: optimization.targetGameweek.id,
       deadlineAt: optimization.targetGameweek.deadlineAt,
       transfers: optimization.transfers,
@@ -36,12 +35,20 @@ export class ProposalService {
       // squad too); this is the new plan's own expected total.
       expectedGain: optimization.totalPredictedPoints - optimization.hitCost,
       hitCost: optimization.hitCost,
+    });
+  }
+
+  // Shared by any proposal source (the optimizer, or a manual override like a
+  // captain-only swap) — mints the id/status/timestamp and stores it.
+  store(proposal: Omit<Proposal, 'id' | 'status' | 'createdAt'>): Proposal {
+    const stored: Proposal = {
+      ...proposal,
+      id: randomUUID(),
       status: ProposalStatus.PENDING,
       createdAt: new Date().toISOString(),
     };
-
-    this.proposals.set(proposal.id, proposal);
-    return proposal;
+    this.proposals.set(stored.id, stored);
+    return stored;
   }
 
   findById(id: string): Proposal | undefined {

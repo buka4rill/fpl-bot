@@ -27,6 +27,19 @@ export class AlertService {
     await this.telegram.sendProposalAlert(text, proposal.id);
   }
 
+  // Loud on failure, not silent — ARCHITECTURE.md §10 risk table: execution
+  // failure should alert, not fail quietly.
+  async sendExecutionResult(
+    proposal: Proposal,
+    success: boolean,
+    detail?: string,
+  ): Promise<void> {
+    const text = success
+      ? `✅ *GW${proposal.gameweekId} lineup applied* — captain/lineup changes are live on your FPL team.`
+      : `🚨 *GW${proposal.gameweekId} execution FAILED*\nYour approval was recorded, but applying it to FPL failed:\n${detail ?? 'unknown error'}\n\nYou'll need to make this change manually before the deadline.`;
+    await this.telegram.sendMessage(text);
+  }
+
   private renderMessage(
     proposal: Proposal,
     players: Player[],
