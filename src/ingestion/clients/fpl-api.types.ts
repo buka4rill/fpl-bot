@@ -80,3 +80,24 @@ export interface ElementSummaryResponse {
   fixtures: RawElementSummaryFixture[];
   history: RawElementSummaryHistory[];
 }
+
+// GET /api/event/{gw}/live/ — captured 2026-09-07. Actual per-player
+// performance once a gameweek is underway/finished, for post-hoc comparison
+// against predicted points. `explain` (per-fixture point breakdown) is
+// omitted as unused.
+export interface RawLiveElementStats {
+  minutes: number;
+  total_points: number;
+  bonus: number;
+  in_dreamteam: boolean;
+  played: boolean;
+}
+
+export interface RawLiveElement {
+  id: number;
+  stats: RawLiveElementStats;
+}
+
+export interface LiveGameweekResponse {
+  elements: RawLiveElement[];
+}

@@ -5,6 +5,7 @@ import { StatsProviderClient } from './clients/stats-provider.client';
 import {
   BootstrapStaticResponse,
   ElementSummaryResponse,
+  LiveGameweekResponse,
   RawFixture,
 } from './clients/fpl-api.types';
 import { Position } from '../common/enums/position.enum';
@@ -15,6 +16,7 @@ describe('IngestionService', () => {
     bootstrapStatic: jest.Mock;
     fixtures: jest.Mock;
     elementSummary: jest.Mock;
+    liveGameweek: jest.Mock;
   };
 
   const rawBootstrap: BootstrapStaticResponse = {
@@ -58,6 +60,7 @@ describe('IngestionService', () => {
       bootstrapStatic: jest.fn(),
       fixtures: jest.fn(),
       elementSummary: jest.fn(),
+      liveGameweek: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -212,6 +215,29 @@ describe('IngestionService', () => {
     const result = await service.getElementSummary(1);
 
     expect(fplPublicClient.elementSummary).toHaveBeenCalledWith(1);
+    expect(result).toBe(raw);
+  });
+
+  it('passes live gameweek stats through unchanged', async () => {
+    const raw: LiveGameweekResponse = {
+      elements: [
+        {
+          id: 1,
+          stats: {
+            minutes: 90,
+            total_points: 3,
+            bonus: 0,
+            in_dreamteam: false,
+            played: true,
+          },
+        },
+      ],
+    };
+    fplPublicClient.liveGameweek.mockResolvedValue(raw);
+
+    const result = await service.getLiveGameweek(3);
+
+    expect(fplPublicClient.liveGameweek).toHaveBeenCalledWith(3);
     expect(result).toBe(raw);
   });
 });

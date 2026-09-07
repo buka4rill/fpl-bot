@@ -12,6 +12,7 @@ import { POSITION_BY_ELEMENT_TYPE } from '../common/enums/position.enum';
 import {
   BootstrapStaticResponse,
   ElementSummaryResponse,
+  LiveGameweekResponse,
   RawFixture,
 } from './clients/fpl-api.types';
 
@@ -44,6 +45,14 @@ export class IngestionService {
   // ends up consuming form/minutes-risk, which isn't decided.
   getElementSummary(playerId: number): Promise<ElementSummaryResponse> {
     return this.fplPublicClient.elementSummary(playerId);
+  }
+
+  // Actual per-player performance once a gameweek is underway/finished, for
+  // post-hoc comparison against PlayerSnapshot.predictedPoints (ARCHITECTURE.md
+  // §4). Not normalized yet — no backtesting/evaluation consumer exists to
+  // dictate the shape.
+  getLiveGameweek(gameweek: number): Promise<LiveGameweekResponse> {
+    return this.fplPublicClient.liveGameweek(gameweek);
   }
 
   private normalizeBootstrap(raw: BootstrapStaticResponse): BootstrapSnapshot {

@@ -6,6 +6,7 @@ import { FplPublicClient } from './fpl-public.client';
 import {
   BootstrapStaticResponse,
   ElementSummaryResponse,
+  LiveGameweekResponse,
   RawFixture,
 } from './fpl-api.types';
 
@@ -83,6 +84,20 @@ describe('FplPublicClient', () => {
 
     expect(httpService.get).toHaveBeenCalledWith(
       'https://fantasy.premierleague.com/api/element-summary/1/',
+    );
+    expect(result).toBe(body);
+  });
+
+  it('fetches live gameweek stats', async () => {
+    const body: LiveGameweekResponse = { elements: [] };
+    httpService.get.mockReturnValue(
+      of({ data: body } as AxiosResponse<LiveGameweekResponse>),
+    );
+
+    const result = await client.liveGameweek(3);
+
+    expect(httpService.get).toHaveBeenCalledWith(
+      'https://fantasy.premierleague.com/api/event/3/live/',
     );
     expect(result).toBe(body);
   });
