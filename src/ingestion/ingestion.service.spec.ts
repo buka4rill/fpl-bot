@@ -37,7 +37,21 @@ describe('IngestionService', () => {
       },
     ],
     teams: [{ id: 1, name: 'Arsenal', short_name: 'ARS' }],
-    element_types: [{ id: 1, singular_name_short: 'GKP' }],
+    element_types: [
+      {
+        id: 1,
+        singular_name_short: 'GKP',
+        squad_select: 2,
+        squad_min_play: 1,
+        squad_max_play: 1,
+      },
+    ],
+    game_settings: {
+      squad_squadsize: 15,
+      squad_squadplay: 11,
+      squad_team_limit: 3,
+      squad_total_spend: 1000,
+    },
     elements: [
       {
         id: 1,
@@ -127,6 +141,21 @@ describe('IngestionService', () => {
         chanceOfPlayingNextRound: null,
       },
     ]);
+
+    expect(snapshot.rules).toEqual({
+      squadSize: 15,
+      startingSize: 11,
+      maxPerClub: 3,
+      budget: 100,
+      positions: [
+        {
+          position: Position.GKP,
+          squadCount: 2,
+          minStarting: 1,
+          maxStarting: 1,
+        },
+      ],
+    });
   });
 
   it('falls back to gameweek 0 when no event is marked current', async () => {

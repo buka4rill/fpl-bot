@@ -2,7 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PredictionService } from './prediction.service';
 import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
-import { Fixture, Player, PlayerSnapshot } from '../common/types/domain.types';
+import {
+  Fixture,
+  Player,
+  PlayerSnapshot,
+  SquadRules,
+} from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
 
 describe('PredictionService', () => {
@@ -69,9 +74,24 @@ describe('PredictionService', () => {
     // team 2 has no upcoming fixture (blank gameweek) — not included here
   ];
 
+  const rules: SquadRules = {
+    squadSize: 15,
+    startingSize: 11,
+    maxPerClub: 3,
+    budget: 100,
+    positions: [
+      { position: Position.GKP, squadCount: 2, minStarting: 1, maxStarting: 1 },
+      { position: Position.DEF, squadCount: 5, minStarting: 3, maxStarting: 5 },
+      { position: Position.MID, squadCount: 5, minStarting: 2, maxStarting: 5 },
+      { position: Position.FWD, squadCount: 3, minStarting: 1, maxStarting: 3 },
+    ],
+  };
+
   beforeEach(async () => {
     ingestionService = {
-      getBootstrapSnapshot: jest.fn().mockResolvedValue({ players, snapshots }),
+      getBootstrapSnapshot: jest
+        .fn()
+        .mockResolvedValue({ players, snapshots, rules }),
       getFixtures: jest.fn().mockResolvedValue(fixtures),
     };
     strategy = {
@@ -99,12 +119,14 @@ describe('PredictionService', () => {
     ]);
   });
 
-  it('returns whatever the strategy produces', async () => {
+  it('returns players, rules, and whatever the strategy produces', async () => {
     const predicted = [{ ...snapshots[0], predictedPoints: 5 }];
     strategy.predict.mockResolvedValue(predicted);
 
     const result = await service.predictGameweek();
 
-    expect(result).toBe(predicted);
+    expect(result.players).toBe(players);
+    expect(result.rules).toBe(rules);
+    expect(result.predictions).toBe(predicted);
   });
 });

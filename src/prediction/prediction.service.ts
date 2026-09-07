@@ -1,7 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
-import { Fixture, Player, PlayerSnapshot } from '../common/types/domain.types';
+import {
+  Fixture,
+  Player,
+  PlayerSnapshot,
+  SquadRules,
+} from '../common/types/domain.types';
+
+export interface PredictionResult {
+  players: Player[];
+  rules: SquadRules;
+  predictions: PlayerSnapshot[];
+}
 
 @Injectable()
 export class PredictionService {
@@ -10,8 +21,8 @@ export class PredictionService {
     private readonly ingestionService: IngestionService,
   ) {}
 
-  async predictGameweek(): Promise<PlayerSnapshot[]> {
-    const [{ players, snapshots }, fixtures] = await Promise.all([
+  async predictGameweek(): Promise<PredictionResult> {
+    const [{ players, snapshots, rules }, fixtures] = await Promise.all([
       this.ingestionService.getBootstrapSnapshot(),
       this.ingestionService.getFixtures(),
     ]);
@@ -21,7 +32,8 @@ export class PredictionService {
       snapshots,
       fixtures,
     );
-    return this.strategy.predict(enriched);
+    const predictions = await this.strategy.predict(enriched);
+    return { players, rules, predictions };
   }
 
   private withNextFixtureDifficulty(

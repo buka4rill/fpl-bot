@@ -60,6 +60,24 @@ export interface PlayerSnapshot {
   nextFixtureDifficulty?: number;
 }
 
+export interface PositionRules {
+  position: Position;
+  squadCount: number; // required count in the 15-man squad
+  minStarting: number; // min allowed in the starting XI
+  maxStarting: number; // max allowed in the starting XI
+}
+
+// Squad-selection rules, read from bootstrap-static's game_settings and
+// element_types rather than hardcoded — same principle as never hardcoding
+// a deadline, since FPL exposes these dynamically too.
+export interface SquadRules {
+  squadSize: number; // total squad, e.g. 15
+  startingSize: number; // starting XI, e.g. 11
+  maxPerClub: number; // e.g. 3
+  budget: number; // £m, e.g. 100.0
+  positions: PositionRules[];
+}
+
 export interface TransferPlan {
   playerOutId: number;
   playerInId: number;

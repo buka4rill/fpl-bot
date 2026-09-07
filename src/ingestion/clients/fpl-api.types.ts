@@ -20,6 +20,18 @@ export interface RawTeam {
 export interface RawElementType {
   id: number;
   singular_name_short: string; // 'GKP' | 'DEF' | 'MID' | 'FWD'
+  squad_select: number; // required count of this position in the 15-man squad
+  squad_min_play: number; // min allowed in the starting XI
+  squad_max_play: number; // max allowed in the starting XI
+}
+
+// bootstrap-static's game_settings — squad-selection rules, not game/league
+// settings unrelated to squad building are omitted.
+export interface RawGameSettings {
+  squad_squadsize: number;
+  squad_squadplay: number; // starting XI size
+  squad_team_limit: number; // max players per club
+  squad_total_spend: number; // tenths of £m, e.g. 1000 = £100.0m
 }
 
 export interface RawElement {
@@ -44,6 +56,7 @@ export interface BootstrapStaticResponse {
   teams: RawTeam[];
   element_types: RawElementType[];
   elements: RawElement[];
+  game_settings: RawGameSettings;
 }
 
 // GET /api/fixtures/?event={gw} — captured 2026-09-07.

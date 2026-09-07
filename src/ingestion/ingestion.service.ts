@@ -6,6 +6,7 @@ import {
   Gameweek,
   Player,
   PlayerSnapshot,
+  SquadRules,
   Team,
 } from '../common/types/domain.types';
 import { POSITION_BY_ELEMENT_TYPE } from '../common/enums/position.enum';
@@ -21,6 +22,7 @@ export interface BootstrapSnapshot {
   teams: Team[];
   players: Player[];
   snapshots: PlayerSnapshot[];
+  rules: SquadRules;
 }
 
 @Injectable()
@@ -95,7 +97,21 @@ export class IngestionService {
       chanceOfPlayingNextRound: element.chance_of_playing_next_round,
     }));
 
-    return { gameweeks, teams, players, snapshots };
+    // squad_total_spend is in tenths of £m, same unit as now_cost.
+    const rules: SquadRules = {
+      squadSize: raw.game_settings.squad_squadsize,
+      startingSize: raw.game_settings.squad_squadplay,
+      maxPerClub: raw.game_settings.squad_team_limit,
+      budget: raw.game_settings.squad_total_spend / 10,
+      positions: raw.element_types.map((elementType) => ({
+        position: POSITION_BY_ELEMENT_TYPE[elementType.id],
+        squadCount: elementType.squad_select,
+        minStarting: elementType.squad_min_play,
+        maxStarting: elementType.squad_max_play,
+      })),
+    };
+
+    return { gameweeks, teams, players, snapshots, rules };
   }
 
   private normalizeFixtures(raw: RawFixture[]): Fixture[] {
