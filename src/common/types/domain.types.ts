@@ -1,5 +1,6 @@
 import { FplChip } from '../enums/chip.enum';
 import { ProposalStatus } from '../enums/proposal-status.enum';
+import { Position } from '../enums/position.enum';
 
 // Plain interfaces standing in for the ARCHITECTURE.md §6 schema sketch.
 // Promote these to ORM entities once a persistence layer is chosen.
@@ -9,6 +10,23 @@ export interface Gameweek {
   deadlineAt: string; // ISO timestamp, always read from bootstrap-static
   isCurrent: boolean;
   isNext: boolean;
+  finished: boolean;
+}
+
+export interface Team {
+  id: number;
+  name: string;
+  shortName: string;
+}
+
+// Static player identity — team/position rarely change mid-season.
+// Price, form, and other time-varying stats live on PlayerSnapshot instead.
+export interface Player {
+  id: number;
+  webName: string;
+  fullName: string;
+  teamId: number;
+  position: Position;
 }
 
 export interface PlayerSnapshot {

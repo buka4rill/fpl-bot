@@ -7,7 +7,7 @@ export class ApprovalController {
 
   // TODO: receive the Telegram callback for an approve/reject decision.
   @Post('telegram-callback')
-  handleTelegramCallback(@Body() payload: unknown) {
+  handleTelegramCallback(@Body() _payload: unknown) {
     return;
   }
 }

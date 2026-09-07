@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import { BootstrapStaticResponse } from './fpl-api.types';
 
 // Public, unauthenticated FPL API — bootstrap-static, fixtures, element-summary,
 // event/live. See ARCHITECTURE.md §4 for the endpoint list.
@@ -9,5 +11,14 @@ export class FplPublicClient {
 
   constructor(private readonly http: HttpService) {}
 
-  // TODO: bootstrapStatic(), fixtures(gameweek?), elementSummary(playerId), liveGameweek(gameweek)
+  async bootstrapStatic(): Promise<BootstrapStaticResponse> {
+    const { data } = await firstValueFrom(
+      this.http.get<BootstrapStaticResponse>(
+        `${this.baseUrl}/bootstrap-static/`,
+      ),
+    );
+    return data;
+  }
+
+  // TODO: fixtures(gameweek?), elementSummary(playerId), liveGameweek(gameweek)
 }

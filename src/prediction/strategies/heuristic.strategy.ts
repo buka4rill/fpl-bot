@@ -5,8 +5,8 @@ import { PlayerSnapshot } from '../../common/types/domain.types';
 // v1 — form, fixture difficulty, underlying stats, minutes risk.
 @Injectable()
 export class HeuristicStrategy implements PredictionStrategy {
-  async predict(players: PlayerSnapshot[]): Promise<PlayerSnapshot[]> {
+  predict(players: PlayerSnapshot[]): Promise<PlayerSnapshot[]> {
     // TODO: implement scoring.
-    return players;
+    return Promise.resolve(players);
   }
 }

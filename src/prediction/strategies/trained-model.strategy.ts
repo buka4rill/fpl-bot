@@ -6,7 +6,7 @@ import { PlayerSnapshot } from '../../common/types/domain.types';
 // history from the heuristic strategy before this is worth building.
 @Injectable()
 export class TrainedModelStrategy implements PredictionStrategy {
-  async predict(players: PlayerSnapshot[]): Promise<PlayerSnapshot[]> {
+  predict(_players: PlayerSnapshot[]): Promise<PlayerSnapshot[]> {
     throw new Error('Not implemented yet.');
   }
 }

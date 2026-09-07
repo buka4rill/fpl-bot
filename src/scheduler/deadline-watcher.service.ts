@@ -6,7 +6,7 @@ export class DeadlineWatcherService {
   // TODO: daily check against bootstrap-static's next deadline; schedule the
   // actual pipeline run for `deadlineLeadHours` before it. Never hardcode a weekday.
   @Cron(CronExpression.EVERY_DAY_AT_NOON)
-  async checkDeadline() {
+  checkDeadline() {
     return;
   }
 }
