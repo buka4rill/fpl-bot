@@ -5,7 +5,7 @@ import { ApprovalStateMachine } from './approval.state-machine';
 import { ProposalService } from '../proposal/proposal.service';
 import { ExecutionService } from '../execution/execution.service';
 import { AlertService } from '../alert/alert.service';
-import { Proposal } from '../common/types/domain.types';
+import { Approval, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { ApprovalEntity } from '../persistence/entities/approval.entity';
 
@@ -54,8 +54,10 @@ describe('ApprovalService', () => {
       sendExecutionResult: jest.fn().mockResolvedValue(undefined),
     };
     approvalRepository = {
-      create: jest.fn().mockImplementation((approval) => approval),
-      save: jest.fn().mockImplementation((approval) => Promise.resolve(approval)),
+      create: jest.fn((approval: Approval) => approval),
+      save: jest
+        .fn()
+        .mockImplementation((approval) => Promise.resolve(approval)),
     };
 
     const module: TestingModule = await Test.createTestingModule({

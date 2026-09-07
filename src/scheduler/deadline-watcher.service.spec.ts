@@ -17,7 +17,10 @@ import { Position } from '../common/enums/position.enum';
 describe('DeadlineWatcherService', () => {
   let service: DeadlineWatcherService;
   let ingestionService: { getBootstrapSnapshot: jest.Mock };
-  let proposalService: { generateProposal: jest.Mock; findByGameweekId: jest.Mock };
+  let proposalService: {
+    generateProposal: jest.Mock;
+    findByGameweekId: jest.Mock;
+  };
   let alertService: { sendProposal: jest.Mock };
   let approvalService: { expireOverdue: jest.Mock };
   let config: { get: jest.Mock };

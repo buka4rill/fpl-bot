@@ -88,7 +88,7 @@ async function setWebhook(botToken: string, url: string): Promise<void> {
   const target = `https://api.telegram.org/bot${botToken}/setWebhook?url=${url}`;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const { data } = await axios.get(target);
+      const { data } = await axios.get<unknown>(target);
       console.log(`[dev-webhook] setWebhook -> ${url}:`, data);
       return;
     } catch (error) {
@@ -160,7 +160,13 @@ function startTunnel(
 
 const MAX_TUNNEL_ATTEMPTS = 4;
 
-async function main(): Promise<void> {
+// Not async — nothing in this function body is itself awaited (the actual
+// async work happens in event-driven callbacks and their own async helpers,
+// e.g. `cleanup`/`setWebhook`, which already declare their own `await`s).
+// The only thing that can throw here is `readEnvVar`, synchronously — caught
+// by the try/catch around the call below, same as an async function's
+// rejection would be.
+function main(): void {
   const botToken = readEnvVar('TELEGRAM_BOT_TOKEN');
 
   console.log('[dev-webhook] starting app (pnpm run start:dev)...');
@@ -262,7 +268,9 @@ async function main(): Promise<void> {
   attemptTunnel(1);
 }
 
-main().catch((error: unknown) => {
+try {
+  main();
+} catch (error: unknown) {
   console.error('[dev-webhook] failed:', describeError(error));
   process.exit(1);
-});
+}

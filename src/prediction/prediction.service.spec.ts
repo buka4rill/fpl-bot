@@ -129,11 +129,11 @@ describe('PredictionService', () => {
     // the current-squad path.
     config = { get: jest.fn().mockReturnValue(undefined) };
     gameweekRepository = {
-      create: jest.fn().mockImplementation((gw) => gw),
+      create: jest.fn((gw: Gameweek) => gw),
       save: jest.fn().mockResolvedValue(undefined),
     };
     playerSnapshotRepository = {
-      create: jest.fn().mockImplementation((snapshot) => snapshot),
+      create: jest.fn((snapshot: PlayerSnapshot) => snapshot),
       save: jest.fn().mockResolvedValue(undefined),
     };
 

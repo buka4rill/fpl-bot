@@ -42,7 +42,9 @@ export class ProposalService {
 
   // Shared by any proposal source (the optimizer, or a manual override like a
   // captain-only swap) — mints the id/status/timestamp and stores it.
-  async store(proposal: Omit<Proposal, 'id' | 'status' | 'createdAt'>): Promise<Proposal> {
+  async store(
+    proposal: Omit<Proposal, 'id' | 'status' | 'createdAt'>,
+  ): Promise<Proposal> {
     const entity = this.proposalRepository.create({
       ...proposal,
       id: randomUUID(),

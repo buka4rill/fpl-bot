@@ -16,27 +16,27 @@ class FakeProposalRepository {
     return entity;
   }
 
-  async save(entity: ProposalEntity): Promise<ProposalEntity> {
+  save(entity: ProposalEntity): Promise<ProposalEntity> {
     this.rows.set(entity.id, entity);
-    return entity;
+    return Promise.resolve(entity);
   }
 
-  async findOneBy(
-    where: Partial<ProposalEntity>,
-  ): Promise<ProposalEntity | null> {
+  findOneBy(where: Partial<ProposalEntity>): Promise<ProposalEntity | null> {
     const rows = [...this.rows.values()];
     if (where.id !== undefined) {
-      return rows.find((row) => row.id === where.id) ?? null;
+      return Promise.resolve(rows.find((row) => row.id === where.id) ?? null);
     }
     if (where.gameweekId !== undefined) {
-      return rows.find((row) => row.gameweekId === where.gameweekId) ?? null;
+      return Promise.resolve(
+        rows.find((row) => row.gameweekId === where.gameweekId) ?? null,
+      );
     }
-    return null;
+    return Promise.resolve(null);
   }
 
-  async findBy(where: Partial<ProposalEntity>): Promise<ProposalEntity[]> {
-    return [...this.rows.values()].filter(
-      (row) => row.status === where.status,
+  findBy(where: Partial<ProposalEntity>): Promise<ProposalEntity[]> {
+    return Promise.resolve(
+      [...this.rows.values()].filter((row) => row.status === where.status),
     );
   }
 }

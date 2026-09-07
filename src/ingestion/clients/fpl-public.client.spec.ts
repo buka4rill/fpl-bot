@@ -35,6 +35,12 @@ describe('FplPublicClient', () => {
       teams: [],
       element_types: [],
       elements: [],
+      game_settings: {
+        squad_squadsize: 15,
+        squad_squadplay: 11,
+        squad_team_limit: 3,
+        squad_total_spend: 1000,
+      },
     };
     httpService.get.mockReturnValue(
       of({ data: body } as AxiosResponse<BootstrapStaticResponse>),

@@ -4,7 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ExecutionService } from './execution.service';
 import { FplAuthClient } from './clients/fpl-auth.client';
 import { FplPick } from './clients/fpl-auth.types';
-import { Proposal } from '../common/types/domain.types';
+import { ExecutionLog, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { FplChip } from '../common/enums/chip.enum';
 import { ExecutionLogEntity } from '../persistence/entities/execution-log.entity';
@@ -61,7 +61,7 @@ describe('ExecutionService', () => {
       setLineup: jest.fn().mockResolvedValue({ picks: currentPicks }),
     };
     executionLogRepository = {
-      create: jest.fn().mockImplementation((log) => log),
+      create: jest.fn((log: ExecutionLog) => log),
       save: jest.fn().mockImplementation((log) => Promise.resolve(log)),
     };
 
