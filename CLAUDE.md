@@ -74,4 +74,37 @@ see `scripts/dev-webhook.ts`.
 5. ⬜ Iterate the prediction model once there's backtestable history
 
 Currently at: **step 3 done**, verified against a real FPL account and a
-real Telegram bot — not just unit tests. Next up is step 4.
+real Telegram bot — not just unit tests. Next up is step 4 — **but read the
+open question below before starting it**, since it might make step 4 moot.
+
+## Open question: keep auto-execution, or go notification-only? (not decided)
+
+Raised 2026-09-07, right after step 3 shipped — deliberately deferred,
+**revisit once other features are done**, don't start on it speculatively.
+
+The FPL auth story (see above) has been the most fragile, highest-maintenance
+part of this whole system, and that fragility is external — nothing on our
+side fixes FPL's session model. Under consideration: drop auto-execution
+entirely. Keep `ExecutionModule`'s code as-is but never call it; run purely
+as a notification bot — propose, alert, and the user applies changes
+manually in the FPL app. If this happens, extending execution to
+transfers/chips (step 4) would likely be skipped rather than built first.
+
+Two companion features raised alongside this idea:
+
+- **Ask the user for current free transfers and available chips before each
+  week's proposal**, instead of an authenticated lookup — `CurrentSquad`'s
+  doc comment in `domain.types.ts` already notes free transfers aren't
+  exposed by the public API, and available (unplayed) chips have the same
+  gap. A weekly Telegram prompt sidesteps needing auth for this at all.
+- **After each deadline passes, ask "did you apply what was suggested?"**
+  and record the answer. In a notification-only model this is the *only*
+  way the bot ever finds out whether advice was followed — without it, a
+  bad outcome next gameweek can't be distinguished between "model was
+  wrong" and "advice wasn't followed," which breaks step 5's backtesting.
+  This is naturally blocked on the persistence-layer decision
+  (ARCHITECTURE.md §6), not something to build against the current
+  in-memory `ProposalService`.
+
+Full writeup: Claude's persistent memory,
+`notification-only-pivot-under-consideration`.
