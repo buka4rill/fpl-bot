@@ -462,7 +462,11 @@ pairing within each group (squad-position counts are fixed by
 `SquadRules`, so for every position exactly as many players leave as
 arrive) — see the regression test in `squad-optimizer.service.spec.ts`
 that deliberately reorders the fixture to break the "coincidentally
-matching order" case the bug was hiding behind.
+matching order" case the bug was hiding behind. **Verified live 2026-09-08,
+same day, after deploying the fix**: re-ran `/propose` → Telegram approve
+against prod (`fpl-bot-buka4rill`, disposable test account) — the same
+9-transfer batch that previously failed atomically now applied
+successfully end-to-end (`✅ GW4 applied — 9 transfers now live`).
 
 ## Weekly team-status report (2026-09-08, replaced same-day)
 
@@ -795,8 +799,12 @@ per that section's own note.
    Bench Boost, and Triple Captain all verified live the same day against a
    disposable test account (see "Execution auth" above), fixing two real
    transfer bugs and resolving the Triple Captain multiplier question the
-   community-derived contract had left open. Only Wildcard/Free Hit remain
-   unverified
+   community-derived contract had left open. The optimizer's own
+   transfer-list construction (as opposed to hand-specified pairs) was
+   verified separately, same day, once `/propose`'s real optimizer path
+   first reached a live submission and hit the position-pairing bug above
+   — re-verified live after the fix (see "Transfer-hit policy"/`deriveTransfers`
+   above). Only Wildcard/Free Hit remain unverified
 5. ⬜ Iterate the prediction model once there's backtestable history
 
 Currently at: **step 4's transfer path, Bench Boost, and Triple Captain all
