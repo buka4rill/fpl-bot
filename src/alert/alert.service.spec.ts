@@ -195,6 +195,42 @@ describe('AlertService', () => {
     expect(text).not.toContain('£');
   });
 
+  it('shows which chip is being played, up front', async () => {
+    await service.sendProposal(
+      { ...proposal, chip: FplChip.BENCH_BOOST },
+      players,
+      snapshots,
+    );
+
+    const [text] = telegram.sendProposalAlert.mock.calls[0] as [string];
+    expect(text).toContain('🃏 Chip: Bench Boost');
+    // Before the transfer/lineup section, not buried at the bottom —
+    // regression test for the live incident where an owner approved a
+    // Bench Boost proposal without the message ever mentioning it.
+    expect(text.indexOf('🃏 Chip:')).toBeLessThan(
+      text.indexOf('No transfers'),
+    );
+  });
+
+  it('says nothing about a chip when none is being played', async () => {
+    await service.sendProposal(proposal, players, snapshots);
+
+    const [text] = telegram.sendProposalAlert.mock.calls[0] as [string];
+    expect(text).not.toContain('🃏');
+  });
+
+  it.each([
+    [FplChip.WILDCARD, 'Wildcard'],
+    [FplChip.FREE_HIT, 'Free Hit'],
+    [FplChip.BENCH_BOOST, 'Bench Boost'],
+    [FplChip.TRIPLE_CAPTAIN, 'Triple Captain'],
+  ])('renders a human-readable label for %s', async (chip, label) => {
+    await service.sendProposal({ ...proposal, chip }, players, snapshots);
+
+    const [text] = telegram.sendProposalAlert.mock.calls[0] as [string];
+    expect(text).toContain(`🃏 Chip: ${label}`);
+  });
+
   it('delegates sendMessage to the telegram adapter', async () => {
     await service.sendMessage('hello');
 
@@ -233,7 +269,56 @@ describe('AlertService', () => {
       });
 
       const [text] = telegram.sendAppliedCheckIn.mock.calls[0] as [string];
-      expect(text).toContain('The proposal was: 2 transfers + wildcard.');
+      expect(text).toContain('The proposal was: 2 transfers + Wildcard.');
+    });
+  });
+
+  describe('sendExecutionResult', () => {
+    it('describes what was actually applied for a transfer proposal', async () => {
+      await service.sendExecutionResult(
+        { ...proposal, transfers: [{ playerOutId: 3, playerInId: 4 }] },
+        true,
+      );
+
+      expect(telegram.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('✅ *GW4 applied* — 1 transfer now live'),
+      );
+    });
+
+    it('describes what was actually applied for a chip proposal', async () => {
+      // Regression test for the live incident where a Bench Boost execution
+      // reported "captain/lineup changes are live" — not what happened.
+      await service.sendExecutionResult(
+        { ...proposal, chip: FplChip.BENCH_BOOST },
+        true,
+      );
+
+      expect(telegram.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('✅ *GW4 applied* — Bench Boost now live'),
+      );
+    });
+
+    it('falls back to "lineup/captain changes" when there are no transfers or chip', async () => {
+      // e.g. a captain-swap proposal — setLineup is still called, so this
+      // fallback stays accurate even with nothing else to report.
+      await service.sendExecutionResult(proposal, true);
+
+      expect(telegram.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining(
+          '✅ *GW4 applied* — lineup/captain changes now live',
+        ),
+      );
+    });
+
+    it('reports failure loudly with the error detail', async () => {
+      await service.sendExecutionResult(proposal, false, 'FPL API down');
+
+      expect(telegram.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('🚨 *GW4 execution FAILED*'),
+      );
+      expect(telegram.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('FPL API down'),
+      );
     });
   });
 });

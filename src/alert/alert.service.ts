@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { TelegramAdapter } from './adapters/telegram.adapter';
 import { Player, PlayerSnapshot, Proposal } from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
+import { FplChip } from '../common/enums/chip.enum';
 
 const POSITION_ORDER: Position[] = [
   Position.GKP,
@@ -9,6 +10,13 @@ const POSITION_ORDER: Position[] = [
   Position.MID,
   Position.FWD,
 ];
+
+const CHIP_LABELS: Record<FplChip, string> = {
+  [FplChip.WILDCARD]: 'Wildcard',
+  [FplChip.FREE_HIT]: 'Free Hit',
+  [FplChip.BENCH_BOOST]: 'Bench Boost',
+  [FplChip.TRIPLE_CAPTAIN]: 'Triple Captain',
+};
 
 @Injectable()
 export class AlertService {
@@ -34,8 +42,17 @@ export class AlertService {
     success: boolean,
     detail?: string,
   ): Promise<void> {
+    // Describes what was actually in the proposal (transfers/chip) rather
+    // than a fixed "captain/lineup changes" phrase — that phrase was
+    // accurate for the original captain-swap-only use case but misleading
+    // for anything else (confirmed live 2026-09-08: a Bench Boost execution
+    // reported "captain/lineup changes are live," which wasn't what
+    // happened at all). Falls back to the old phrasing only when there's
+    // genuinely nothing else to report — setLineup is still called on every
+    // execution, so that fallback stays accurate for a plain captain swap.
+    const summary = this.summarizeChanges(proposal) ?? 'lineup/captain changes';
     const text = success
-      ? `✅ *GW${proposal.gameweekId} lineup applied* — captain/lineup changes are live on your FPL team.`
+      ? `✅ *GW${proposal.gameweekId} applied* — ${summary} now live on your FPL team.`
       : `🚨 *GW${proposal.gameweekId} execution FAILED*\nYour approval was recorded, but applying it to FPL failed:\n${detail ?? 'unknown error'}\n\nYou'll need to make this change manually before the deadline.`;
     await this.telegram.sendMessage(text);
   }
@@ -46,17 +63,7 @@ export class AlertService {
   // execution; the hard "silence means do nothing" rule already applied
   // before this fires.
   async sendAppliedCheckIn(proposal: Proposal): Promise<void> {
-    const changeSummary =
-      proposal.transfers.length === 0 && !proposal.chip
-        ? 'no changes'
-        : [
-            proposal.transfers.length > 0
-              ? `${proposal.transfers.length} transfer${proposal.transfers.length === 1 ? '' : 's'}`
-              : undefined,
-            proposal.chip ? `${proposal.chip}` : undefined,
-          ]
-            .filter(Boolean)
-            .join(' + ');
+    const changeSummary = this.summarizeChanges(proposal) ?? 'no changes';
 
     const text = [
       `❓ *GW${proposal.gameweekId} — the deadline has passed.*`,
@@ -65,6 +72,22 @@ export class AlertService {
     ].join('\n');
 
     await this.telegram.sendAppliedCheckIn(text, proposal.id);
+  }
+
+  // Shared by sendExecutionResult/sendAppliedCheckIn — undefined when the
+  // proposal has neither transfers nor a chip, so each caller can supply
+  // its own accurate fallback phrase (they mean different things: "no
+  // changes" vs. "lineup/captain changes" are both true in that case,
+  // depending which message it's for).
+  private summarizeChanges(proposal: Proposal): string | undefined {
+    const parts = [
+      proposal.transfers.length > 0
+        ? `${proposal.transfers.length} transfer${proposal.transfers.length === 1 ? '' : 's'}`
+        : undefined,
+      proposal.chip ? CHIP_LABELS[proposal.chip] : undefined,
+    ].filter((part): part is string => Boolean(part));
+
+    return parts.length > 0 ? parts.join(' + ') : undefined;
   }
 
   // Thin passthrough so callers outside AlertModule (e.g. TeamStateService)
@@ -101,6 +124,16 @@ export class AlertService {
       `🤖 *FPL Assistant — GW${proposal.gameweekId} Proposal*`,
       '',
     ];
+
+    // Surfaced up front, before transfers — playing a chip changes how the
+    // rest of the message should be read (e.g. "No transfers" reads very
+    // differently once you know Bench Boost is being played this week), and
+    // burying it further down risks an approval made without this being
+    // seen at all (confirmed live 2026-09-08: it wasn't shown anywhere and
+    // the owner approved a Bench Boost proposal without realizing it).
+    if (proposal.chip) {
+      lines.push(`🃏 Chip: ${CHIP_LABELS[proposal.chip]}`, '');
+    }
 
     if (proposal.transfers.length === 0) {
       lines.push('✅ No transfers — squad unchanged');

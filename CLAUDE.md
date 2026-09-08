@@ -252,6 +252,27 @@ live**; a real Approve/Reject tap won't reach the app again until either a
 fresh `pnpm run dev:webhook` succeeds or the eventual real deploy removes
 the tunnel dependency entirely.
 
+**Two Telegram messages found misleading during this same test, both
+fixed 2026-09-08 (`AlertService`).** The Bench Boost proposal alert never
+mentioned the chip anywhere in its text — the owner approved it without
+realizing a chip was involved at all. Fixed by surfacing `🃏 Chip: <label>`
+right after the header, *before* the transfer/lineup section (playing a
+chip changes how the rest of the message should be read, and this is
+exactly the kind of fact an approval decision needs up front, not buried).
+Separately, the post-execution success message
+(`AlertService.sendExecutionResult`) hardcoded `"captain/lineup changes
+are live"` regardless of what was actually applied — accurate for the
+original captain-swap-only use case (step 3), misleading once transfers
+and chips existed too: the Bench Boost confirmation said "captain/lineup
+changes are live" when neither had changed. Fixed by describing what the
+proposal actually contained (transfer count / chip label), shared via a
+new `summarizeChanges()` helper also used by `sendAppliedCheckIn` (which
+had the same shape of summary already, just inline and using the raw chip
+enum value like `wildcard` instead of a human label) — falls back to the
+old "lineup/captain changes" phrasing only when there's genuinely nothing
+else to report (still accurate then, since `setLineup` runs on every
+execution regardless).
+
 **Correction 2026-09-08 — not blocked on "preseason" the way it looked.**
 A live `POST /team-state/report` against the disposable test account
 (currently `gameweekId: 4`) came back with `bboost`/`3xc` both already
