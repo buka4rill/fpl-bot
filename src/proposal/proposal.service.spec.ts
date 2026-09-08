@@ -44,6 +44,22 @@ class FakeProposalRepository {
       [...this.rows.values()].filter((row) => row.status === where.status),
     );
   }
+
+  // Minimal stand-in for TypeORM's `find({ where: [...] })` OR-condition
+  // shape, as used by findUnreportedTerminal — only supports what that
+  // query actually needs: a status match plus an IsNull() check.
+  find(options: {
+    where: Array<{ status: ProposalStatus; resultReportedAt: unknown }>;
+  }): Promise<ProposalEntity[]> {
+    return Promise.resolve(
+      [...this.rows.values()].filter((row) =>
+        options.where.some(
+          (clause) =>
+            row.status === clause.status && row.resultReportedAt == null,
+        ),
+      ),
+    );
+  }
 }
 
 describe('ProposalService', () => {
@@ -209,5 +225,52 @@ describe('ProposalService', () => {
     await expect(
       service.recordAppliedManually('nonexistent', true),
     ).rejects.toThrow('No proposal found');
+  });
+
+  describe('findUnreportedTerminal', () => {
+    it('finds APPROVED/REJECTED/EXPIRED proposals without a result report yet', async () => {
+      const approved = await service.generateProposal();
+      await service.updateStatus(approved.id, ProposalStatus.APPROVED);
+      const rejected = await service.generateProposal();
+      await service.updateStatus(rejected.id, ProposalStatus.REJECTED);
+      const expired = await service.generateProposal();
+      await service.updateStatus(expired.id, ProposalStatus.EXPIRED);
+      await service.generateProposal(); // stays PENDING — excluded
+
+      const results = await service.findUnreportedTerminal();
+
+      expect(results.map((p) => p.id).sort()).toEqual(
+        [approved.id, rejected.id, expired.id].sort(),
+      );
+    });
+
+    it('excludes a proposal that has already been reported on', async () => {
+      const proposal = await service.generateProposal();
+      await service.updateStatus(proposal.id, ProposalStatus.APPROVED);
+      await service.markResultReported(proposal.id);
+
+      const results = await service.findUnreportedTerminal();
+
+      expect(results).toEqual([]);
+    });
+  });
+
+  describe('markResultReported', () => {
+    it('stamps a timestamp and persists it', async () => {
+      const proposal = await service.generateProposal();
+
+      const updated = await service.markResultReported(proposal.id);
+
+      expect(updated.resultReportedAt).toBeTruthy();
+      expect(
+        (await service.findById(proposal.id))?.resultReportedAt,
+      ).toBeTruthy();
+    });
+
+    it('throws for an unknown proposal', async () => {
+      await expect(service.markResultReported('nonexistent')).rejects.toThrow(
+        'No proposal found',
+      );
+    });
   });
 });

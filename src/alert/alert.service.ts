@@ -3,6 +3,7 @@ import { TelegramAdapter } from './adapters/telegram.adapter';
 import { Player, PlayerSnapshot, Proposal } from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
 import { FplChip } from '../common/enums/chip.enum';
+import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
 const POSITION_ORDER: Position[] = [
   Position.GKP,
@@ -68,10 +69,66 @@ export class AlertService {
     const text = [
       `❓ *GW${proposal.gameweekId} — the deadline has passed.*`,
       `The proposal was: ${changeSummary}.`,
-      "Did you end up making that change yourself in the FPL app? (Just for my own tracking — doesn't affect anything.)",
+      "Did you apply my suggestion? (Just for my own tracking — doesn't affect anything.)",
     ].join('\n');
 
     await this.telegram.sendAppliedCheckIn(text, proposal.id);
+  }
+
+  // Post-gameweek "how did my suggestion actually score" report —
+  // ResultsService's output, sent for every terminal proposal (APPROVED/
+  // REJECTED/EXPIRED) once its gameweek finishes. `predictedScore` is the
+  // proposal's simulated actual score (gameweek-scoring.util.ts — real
+  // player points, autosubs, and chip effects applied to what was
+  // *proposed*, not what happened); `actualScore` is what the account
+  // really scored that gameweek, independent of this proposal's fate.
+  async sendResultReport(
+    proposal: Proposal,
+    predictedScore: number,
+    actualScore: number,
+  ): Promise<void> {
+    const delta = actualScore - predictedScore;
+    const pts = (n: number): string => `${n} pt${Math.abs(n) === 1 ? '' : 's'}`;
+    const deltaLine =
+      delta === 0
+        ? '➖ Same either way'
+        : delta > 0
+          ? `✅ You beat my suggestion by ${pts(delta)}`
+          : `📉 My suggestion would have scored ${pts(-delta)} more`;
+
+    const contextLine = this.resultContextLine(proposal);
+    const text = [
+      `📊 *GW${proposal.gameweekId} Result*`,
+      ...(contextLine ? [contextLine] : []),
+      `My suggestion: ${predictedScore} pts`,
+      `Your actual score: ${actualScore} pts`,
+      deltaLine,
+    ].join('\n');
+
+    await this.telegram.sendMessage(text);
+  }
+
+  // One line of context on what actually happened to the proposal — skipped
+  // for APPROVED (self-evident: the bot applied it itself, so this message
+  // is really a model-accuracy check rather than a "what if"). For EXPIRED,
+  // draws on whatever sendAppliedCheckIn's answer was, if any — it's
+  // usually already been answered by the time the gameweek finishes, days
+  // after the deadline passed.
+  private resultContextLine(proposal: Proposal): string | undefined {
+    switch (proposal.status) {
+      case ProposalStatus.REJECTED:
+        return '(You rejected this proposal.)';
+      case ProposalStatus.EXPIRED:
+        if (proposal.appliedManually === true) {
+          return '(You told me you applied it anyway.)';
+        }
+        if (proposal.appliedManually === false) {
+          return "(You told me you didn't apply it.)";
+        }
+        return '(The deadline passed without a reply.)';
+      default:
+        return undefined;
+    }
   }
 
   // Shared by sendExecutionResult/sendAppliedCheckIn — undefined when the

@@ -6,6 +6,7 @@ import {
   Fixture,
   Gameweek,
   Player,
+  PlayerGameweekStats,
   PlayerSnapshot,
   SquadRules,
   Team,
@@ -60,6 +61,38 @@ export class IngestionService {
   // dictate the shape.
   getLiveGameweek(gameweek: number): Promise<LiveGameweekResponse> {
     return this.fplPublicClient.liveGameweek(gameweek);
+  }
+
+  // ResultsService's first real consumer of live-gameweek data — normalized
+  // into a lookup by player id, keyed for the autosub/scoring simulation in
+  // gameweek-scoring.util.ts.
+  async getGameweekPlayerStats(
+    gameweek: number,
+  ): Promise<Map<number, PlayerGameweekStats>> {
+    const raw = await this.fplPublicClient.liveGameweek(gameweek);
+    return new Map(
+      raw.elements.map((element) => [
+        element.id,
+        {
+          playerId: element.id,
+          totalPoints: element.stats.total_points,
+          minutes: element.stats.minutes,
+          played: element.stats.played,
+        },
+      ]),
+    );
+  }
+
+  // The real points actually scored that gameweek, for ResultsService to
+  // compare against the proposal's simulated score. A separate method from
+  // getCurrentSquad below since that one is pinned to entry.current_event —
+  // this needs an arbitrary past gameweek instead.
+  async getGameweekResult(
+    teamId: number,
+    gameweek: number,
+  ): Promise<{ actualPoints: number }> {
+    const picks = await this.fplPublicClient.getEntryPicks(teamId, gameweek);
+    return { actualPoints: picks.entry_history.points };
   }
 
   // No `freeTransfers` on the result — the public API doesn't expose your

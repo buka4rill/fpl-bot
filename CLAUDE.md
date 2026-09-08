@@ -50,6 +50,7 @@ file is the short version for whichever session picks this repo up next.
 | `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers, Bench Boost, and Triple Captain all verified live 2026-09-08; Wildcard/Free Hit still unverified — see below |
 | `auth` | implemented (2026-09-08) — holds `FplAuthClient`/the authenticated session (moved out of `ExecutionModule`, see "Execution auth" below); `AuthService.isAuthenticated()`/`assertAuthenticated()` let other modules check/gate on login state; `POST /auth/token` (shared-secret guarded) applies a freshly-captured refresh token to the running instance — the landing spot for `pnpm run auth:login`'s Playwright-assisted capture (`scripts/auth-login.ts`) |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday); also gates on `AuthService.isAuthenticated()` before generating a proposal — see "Execution auth" below |
+| `results` | implemented (2026-09-08) — `ResultsService` (own hourly poll, public-API only) reports "how did my suggestion actually score" for every terminal proposal (APPROVED/REJECTED/EXPIRED) once its gameweek finishes — full autosub/chip-accurate simulation, not an approximation; `POST /results/report` manually re-triggers it — see "Post-gameweek results report" below |
 | persistence | implemented — Postgres + TypeORM, see "Persistence" below |
 
 ## Persistence
@@ -448,6 +449,72 @@ boolean | null` column on `ProposalEntity`/`Proposal`
 (migration `AddAppliedManuallyToProposals...`). Purely a label for future
 backtesting — never gates or re-triggers execution, and answering twice
 (a duplicate tap) just overwrites the same field rather than erroring.
+
+**Wording tweak (2026-09-08, later same day)**: the question itself is now
+"Did you apply my suggestion?" — was "Did you end up making that change
+yourself in the FPL app?" User feedback: more natural, and reads better
+now that the post-gameweek results report (below) sometimes echoes the
+same answer back for context.
+
+## Post-gameweek results report (2026-09-08, implemented)
+
+Raised alongside the check-in above — "how many points would I have gotten
+had I approved the predicted strategy," connected to (but temporally
+**separate** from) that check-in: the check-in fires immediately once a
+proposal's deadline passes, days before the gameweek's matches are even
+played, so it can never itself carry a score. This is the second half —
+`ResultsService` runs its own hourly poll (public-API only, no auth
+needed) and, once a proposal's gameweek is marked `finished: true` in
+bootstrap-static, sends a `📊 GW{n} Result` report for **every terminal
+proposal** (APPROVED/REJECTED/EXPIRED — deliberately not just EXPIRED,
+unlike the check-in above: this is a model-accuracy signal for step 5
+regardless of what happened, not only a backtesting label for the unknown
+case) comparing:
+- **Predicted**: what the exact proposed lineup/captain/chip would have
+  scored, computed by `gameweek-scoring.util.ts`'s
+  `computeProposalActualScore` — a full simulation, not an approximation,
+  chosen deliberately over a cheaper "sum the starting XI" shortcut. It
+  replicates three real FPL scoring rules: (1) autosubs — a non-playing
+  starter is replaced by the highest-priority bench player who did play,
+  constrained by each position's starting min/max (formation-aware, and
+  confirmed live-rule-accurate that FPL allows a cross-position sub, e.g. a
+  bench defender covering for a missing midfielder, as long as the
+  resulting formation stays legal — this surprised the first draft of the
+  test suite, see the spec file's comments); (2) captaincy transfers to the
+  vice-captain if the captain didn't play; (3) chip effects — Bench Boost
+  sums all 15 (no autosubs needed, everyone already counts), Triple
+  Captain only triples if the actual captain themselves played (does not
+  carry over as a triple to the vice). One acknowledged gap: if the
+  vice-captain is a benched player who played but wasn't actually
+  autosubbed in, FPL's precise behavior for the captaincy-bonus transfer in
+  that specific double-edge-case isn't publicly documented — this treats
+  "played" as sufficient on its own.
+- **Actual**: the real points the account scored that gameweek, from the
+  public entry/picks endpoint's `entry_history.points` (newly typed on
+  `RawEntryHistory` — was missing, only `event`/`bank`/`value` were
+  captured before).
+
+New `IngestionService` methods: `getGameweekPlayerStats(gameweekId)`
+(normalizes `liveGameweek()` into `Map<playerId, PlayerGameweekStats>` —
+`{totalPoints, minutes, played}`, the first real normalization of that
+endpoint, previously left raw with no consumer) and
+`getGameweekResult(teamId, gameweekId)`. New `Proposal.resultReportedAt:
+string | null` column (migration `AddResultReportedAtToProposals...`) is a
+one-time-send guard, same idea as `appliedManually`; `ProposalService
+.findUnreportedTerminal()`/`.markResultReported()` back it. Best-effort per
+proposal (one failure doesn't block the rest of the batch or leave a
+false-negative "already reported" state — only marked once the report
+actually sends). Season-scoped throughout (`(season, gameweekId)`, not
+just `gameweekId`) for the same cross-season-collision reason as
+everything else touching gameweek identity — see the season-scoping fix
+above.
+
+`AlertService.sendResultReport` renders the comparison plus a delta line
+(who beat whom, or a tie), with one line of context on the proposal's fate
+— skipped for APPROVED (self-evident, this is really an accuracy check on
+the model, not a "what if"), otherwise noting REJECTED or, for EXPIRED,
+echoing back whatever the check-in's `appliedManually` answer was (or that
+none came in).
 
 ## TODO: deploy off the local machine + quick tunnel (not started)
 

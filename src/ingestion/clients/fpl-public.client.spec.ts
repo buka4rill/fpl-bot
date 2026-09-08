@@ -132,7 +132,7 @@ describe('FplPublicClient', () => {
   it('fetches entry picks for a gameweek', async () => {
     const body: EntryPicksResponse = {
       active_chip: null,
-      entry_history: { event: 3, bank: 0, value: 1000 },
+      entry_history: { event: 3, points: 55, bank: 0, value: 1000 },
       picks: [],
     };
     httpService.get.mockReturnValue(

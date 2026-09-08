@@ -59,4 +59,7 @@ export class ProposalEntity implements Proposal {
 
   @Column({ type: 'boolean', nullable: true })
   appliedManually?: boolean | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  resultReportedAt?: string | null;
 }

@@ -136,6 +136,7 @@ export interface RawPick {
 
 export interface RawEntryHistory {
   event: number;
+  points: number; // actual points scored that gameweek
   bank: number; // tenths of £m
   value: number; // tenths of £m
 }

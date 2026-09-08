@@ -321,4 +321,112 @@ describe('AlertService', () => {
       );
     });
   });
+
+  describe('sendResultReport', () => {
+    it('reports the predicted and actual scores', async () => {
+      await service.sendResultReport(proposal, 52, 48);
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).toContain('📊 *GW4 Result*');
+      expect(text).toContain('My suggestion: 52 pts');
+      expect(text).toContain('Your actual score: 48 pts');
+    });
+
+    it('shows the delta when the actual score fell short', async () => {
+      await service.sendResultReport(proposal, 52, 48);
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).toContain(
+        '📉 My suggestion would have scored 4 pts more',
+      );
+    });
+
+    it('shows the delta when the actual score beat the suggestion', async () => {
+      await service.sendResultReport(proposal, 48, 52);
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).toContain('✅ You beat my suggestion by 4 pts');
+    });
+
+    it('shows a neutral line when the scores match exactly', async () => {
+      await service.sendResultReport(proposal, 50, 50);
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).toContain('➖ Same either way');
+    });
+
+    it('uses singular "pt" for a delta of exactly 1', async () => {
+      await service.sendResultReport(proposal, 50, 51);
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      // Deliberately anchored to end-of-line: "51 pts" (the actual score,
+      // rendered elsewhere in the same message) also contains "1 pts" as a
+      // substring, so a bare .not.toContain('1 pts') would be a false
+      // negative here.
+      expect(text).toMatch(/beat my suggestion by 1 pt$/m);
+    });
+
+    it('adds no context line for an APPROVED proposal', async () => {
+      await service.sendResultReport(
+        { ...proposal, status: ProposalStatus.APPROVED },
+        50,
+        50,
+      );
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).not.toContain('(');
+    });
+
+    it('notes a REJECTED proposal', async () => {
+      await service.sendResultReport(
+        { ...proposal, status: ProposalStatus.REJECTED },
+        50,
+        50,
+      );
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).toContain('(You rejected this proposal.)');
+    });
+
+    it('notes an EXPIRED proposal with no applied-manually answer yet', async () => {
+      await service.sendResultReport(
+        { ...proposal, status: ProposalStatus.EXPIRED, appliedManually: null },
+        50,
+        50,
+      );
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).toContain('(The deadline passed without a reply.)');
+    });
+
+    it('notes an EXPIRED proposal the owner said they applied anyway', async () => {
+      await service.sendResultReport(
+        {
+          ...proposal,
+          status: ProposalStatus.EXPIRED,
+          appliedManually: true,
+        },
+        50,
+        50,
+      );
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).toContain('(You told me you applied it anyway.)');
+    });
+
+    it('notes an EXPIRED proposal the owner said they did not apply', async () => {
+      await service.sendResultReport(
+        {
+          ...proposal,
+          status: ProposalStatus.EXPIRED,
+          appliedManually: false,
+        },
+        50,
+        50,
+      );
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).toContain("(You told me you didn't apply it.)");
+    });
+  });
 });

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { SquadOptimizerService } from '../optimization/squad-optimizer.service';
 import { Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
@@ -111,6 +111,36 @@ export class ProposalService {
       throw new Error(`No proposal found with id ${id}.`);
     }
     const updated: ProposalEntity = { ...proposal, appliedManually: applied };
+    return this.proposalRepository.save(updated);
+  }
+
+  // Every terminal proposal (APPROVED/REJECTED/EXPIRED — PENDING is
+  // deliberately excluded, there's nothing to report on yet) that hasn't
+  // had its post-gameweek points report sent — consumed by ResultsService,
+  // which further filters to whichever of these belong to a gameweek
+  // that's actually finished by now.
+  async findUnreportedTerminal(): Promise<Proposal[]> {
+    return this.proposalRepository.find({
+      where: [
+        { status: ProposalStatus.APPROVED, resultReportedAt: IsNull() },
+        { status: ProposalStatus.REJECTED, resultReportedAt: IsNull() },
+        { status: ProposalStatus.EXPIRED, resultReportedAt: IsNull() },
+      ],
+    });
+  }
+
+  // One-time-send guard for the points report, same idea as the dedupe on
+  // proposal generation itself — stops ResultsService re-sending on every
+  // hourly poll once a gameweek's report has gone out.
+  async markResultReported(id: string): Promise<Proposal> {
+    const proposal = await this.proposalRepository.findOneBy({ id });
+    if (!proposal) {
+      throw new Error(`No proposal found with id ${id}.`);
+    }
+    const updated: ProposalEntity = {
+      ...proposal,
+      resultReportedAt: new Date().toISOString(),
+    };
     return this.proposalRepository.save(updated);
   }
 }

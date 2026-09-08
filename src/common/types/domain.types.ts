@@ -124,6 +124,22 @@ export interface Proposal {
   // re-triggers execution, and a REJECTED/APPROVED proposal's outcome is
   // already known without asking.
   appliedManually?: boolean | null;
+  // Set once ResultsService has sent the post-gameweek points report for
+  // this proposal — a one-time-send guard, same idea as the dedupe on
+  // proposal generation itself. Null/undefined until then.
+  resultReportedAt?: string | null;
+}
+
+// Actual per-player performance for a single finished gameweek, from the
+// live-gameweek endpoint — normalized here (rather than left as
+// LiveGameweekResponse) once ResultsService became the first real consumer.
+// `played` (not just `minutes > 0`) mirrors FPL's own autosub eligibility
+// signal directly rather than re-deriving it.
+export interface PlayerGameweekStats {
+  playerId: number;
+  totalPoints: number;
+  minutes: number;
+  played: boolean;
 }
 
 export interface Approval {
