@@ -83,6 +83,14 @@ Postgres only exists inside that container — there's nothing on
 db:up` if not). That applies whether you're connecting via `psql` or a GUI
 client below, not just the app itself.
 
+Data survives `pnpm db:down` / `docker compose down` (or just quitting
+Docker Desktop) — it lives in the named volume `fpl-bot-postgres-data`, not
+in the container, so stopping/removing the container doesn't touch it.
+`pnpm db:up` reattaches the same volume next time. The only things that
+actually delete it: `docker compose down -v` (the `-v` removes named
+volumes), `docker volume rm fpl-bot-postgres-data`, or a full Docker
+Desktop reset/uninstall.
+
 ### Inspecting the tables
 
 Quick one-offs from the terminal (no client needed):
