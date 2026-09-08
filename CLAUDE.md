@@ -531,6 +531,48 @@ double-gameweek detection (two fixtures sharing an `event` for one team)
 don't need a new data source either — just a multi-gameweek prediction
 loop, which is real engineering work, not blocked on anything external.
 
+**`chipRiskPremium` is a guardrail against the worst symptom, not a fix —
+raised, discussed, deliberately not acted on yet (2026-09-08).**
+Wildcard/Free Hit weren't live-tested (this account's still show
+`unavailable` — no completed-gameweek picks history yet), but the same
+"no hold-value modeling" gap almost certainly hits them too, via a
+different mechanism than Bench Boost/Triple Captain's bonus terms:
+`chipCoversTransferCost` gives them an unconstrained, zero-hit-cost full
+squad rebuild against all ~700 players, so their `netExpectedPoints` is
+*structurally* >= "no chip"'s (the solver could always just replicate the
+constrained squad if nothing better existed) and, unlike a bonus capped
+by a few specific players' scores, the potential gain from a full rebuild
+is effectively unbounded — likely to clear the flat 8-pt premium even
+more readily than Bench Boost/Triple Captain do. Revisit raising the
+premium specifically for these two once they're actually observable
+against a real squad (not yet possible on this account).
+
+**The real fix, discussed but not started: multi-gameweek lookahead with
+a rolling-max comparison.** Predict the next N gameweeks (5-8, say)
+instead of just the next one — buildable now per the fixture-data finding
+above, no external source needed — and only recommend playing a chip
+*this* week if it's at or near the best opportunity across that window,
+otherwise hold. Turns the current flat point-threshold guardrail into an
+actual timing decision (including spotting an upcoming double gameweek
+worth waiting for).
+
+**When to actually build it: gated on a data checkpoint, not a calendar
+date or "whenever there's time."** A lookahead model is only as good as
+the single-week predictions it's built on, and those are still "reasonable
+guesses, not backtested" (`HeuristicStrategy`'s own header comment). Right
+time is once `ResultsService`'s predicted-vs-actual history covers
+roughly half a season (~15-19 gameweeks — the same threshold reasoned out
+for step 5 generally), enough to know whether the underlying predictions
+are even directionally trustworthy. Building the lookahead architecture
+before that just stacks a more confident-looking decision on an
+unvalidated foundation — worse than today's blunt guardrail, not better.
+One option to shorten the wait: the multi-gameweek prediction *plumbing*
+itself isn't data-blocked, only its *trustworthiness* is — could build it
+earlier and run it in a log-only/shadow mode (compute what it would
+recommend, don't act on it yet) until the backtesting checkpoint
+validates it, the same idea `ResultsModule` already applies to tracking
+overall prediction accuracy without gating anything on it.
+
 For local webhook testing (tapping Approve/Reject against a real Telegram
 callback), `pnpm run dev:webhook` automates the tunnel + webhook wiring —
 see `scripts/dev-webhook.ts`.
