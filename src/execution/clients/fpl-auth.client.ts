@@ -92,12 +92,17 @@ export class FplAuthClient {
   }
 
   // POST /api/transfers/ — see fpl-auth.types.ts: sourced from a community
-  // library, not captured live. Mirrors that library's dry-run-then-commit
-  // pattern: FPL validates the transfer with `confirmed: false` first
-  // (returns errors without applying anything), and only the second,
-  // `confirmed: true` call actually submits it. `submissions` can be an
-  // empty array with a chip flag set — that's how Wildcard/Free Hit get
-  // activated on a week with no actual transfers.
+  // library, not captured live until 2026-09-08 against a disposable test
+  // account. That source assumed a dry-run-then-commit pattern (`confirmed:
+  // false` validates without applying, a second `confirmed: true` call
+  // actually submits) — **disproved live**: a single `confirmed: false`
+  // call already applied the transfer for real (confirmed by checking the
+  // account's actual squad afterward), before any second call was ever
+  // made. What a second `confirmed: true` call would do on top of an
+  // already-applied transfer is untested and deliberately not risked here —
+  // this sends exactly one request, `confirmed: true` directly. `submissions`
+  // can be an empty array with a chip flag set — that's how Wildcard/Free
+  // Hit get activated on a week with no actual transfers.
   async submitTransfers(
     teamId: number,
     gameweekId: number,
@@ -106,7 +111,7 @@ export class FplAuthClient {
   ): Promise<unknown> {
     const accessToken = await this.ensureAccessToken();
     const payload: FplTransferPayload = {
-      confirmed: false,
+      confirmed: true,
       entry: teamId,
       event: gameweekId,
       transfers: submissions,
@@ -116,29 +121,23 @@ export class FplAuthClient {
     const headers = { Authorization: `Bearer ${accessToken}` };
 
     try {
-      const { data: dryRunResult } = await firstValueFrom(
+      const { data } = await firstValueFrom(
         this.http.post<unknown>(`${this.apiBase}/transfers/`, payload, {
           headers,
         }),
       );
+      // A clean response was assumed (community-library source) to be `{}`;
+      // verified live 2026-09-08 to actually be an empty-body 200, which
+      // axios can't JSON-parse and hands back as `''`. Treated the same as
+      // `{}` here — not as an error.
       const hasErrors =
-        dryRunResult !== null &&
-        dryRunResult !== undefined &&
-        (typeof dryRunResult !== 'object' ||
-          Object.keys(dryRunResult).length > 0);
+        data !== null &&
+        data !== undefined &&
+        data !== '' &&
+        (typeof data !== 'object' || Object.keys(data).length > 0);
       if (hasErrors) {
-        throw new Error(
-          `Transfer validation failed: ${JSON.stringify(dryRunResult)}`,
-        );
+        throw new Error(`Transfer submission failed: ${JSON.stringify(data)}`);
       }
-
-      const { data } = await firstValueFrom(
-        this.http.post<unknown>(
-          `${this.apiBase}/transfers/`,
-          { ...payload, confirmed: true },
-          { headers },
-        ),
-      );
       return data;
     } catch (error) {
       throw sanitizeError(error);

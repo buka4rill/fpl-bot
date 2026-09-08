@@ -40,10 +40,10 @@ file is the short version for whichever session picks this repo up next.
 | `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder |
 | `optimization` | implemented — squad optimizer (ILP) + chip evaluator. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
 | `team-state` | implemented (2026-09-08, rebuilt same day) — reads free transfers + chip availability live from FPL's authenticated my-team endpoint (via `ExecutionService`) and sends it as an informational Telegram report before each week's proposal; no persistence, never blocks; `POST /team-state/report` manually re-triggers it for testing — see "Weekly team-status report" below |
-| `proposal` | implemented — optimizer-driven, plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing) and `POST /proposal/chip` (declare a chip for this week's proposal — see "Execution auth" below) |
+| `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), and `POST /proposal/chip` (declare a chip for this week's proposal) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
 | `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:` callbacks only); triggers execution on `APPROVED` |
-| `execution` | implemented for **lineup/captain/transfers/chips** — `FplAuthClient` (OAuth refresh-token flow, see below) + `ExecutionService`. Transfers/chip contract is unverified against the live API — see below |
+| `execution` | implemented for **lineup/captain/transfers/chips** — `FplAuthClient` (OAuth refresh-token flow, see below) + `ExecutionService`. Transfers verified live 2026-09-08; chips still unverified — see below |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday) |
 | persistence | implemented — Postgres + TypeORM, see "Persistence" below |
 
@@ -100,20 +100,33 @@ silently) — the fix is repeating the manual browser capture, not automated
 re-login. Full capture steps and the underlying HTTP contracts are in
 Claude's persistent memory (`fpl-write-api-contract`), not duplicated here.
 
-**Transfers/chips (step 4, 2026-09-08) — contract is unverified, unlike
-lineup/captain.** `/api/my-team/` was captured live before it was built;
-`/api/transfers/` never was — `FplAuthClient.submitTransfers` and the
-`chip` field on `setLineup` are built against a well-established community
-library (`amosbastian/fpl`'s `fpl/models/user.py`, already in
-ARCHITECTURE.md's Sources), not a live capture. Specifics carried over
-unverified: the exact `/api/transfers/` payload shape (dry-run
-`confirmed: false` → commit `confirmed: true`), and that Triple Captain's
-tripling is signalled purely by the `chip` field server-side (picks stay
-at `multiplier: 2`, not `3`). Needs live confirmation the first time a
-transfer or chip actually gets played for real — watch the
-`execution_logs` row and confirm against the FPL app afterward, same as
-lineup/captain was verified. A wrong shape should fail as a clean 400
-before anything applies.
+**Transfers (step 4) — verified live 2026-09-08 against a disposable test
+account, and the community-library-derived contract was wrong.**
+`FplAuthClient.submitTransfers` originally mirrored `amosbastian/fpl`'s
+assumed dry-run-then-commit pattern (`confirmed: false` validates without
+applying, a second `confirmed: true` call actually submits). **Live testing
+disproved this**: a single `confirmed: false` call already applied the
+transfer for real (confirmed by checking the test account's actual squad
+afterward — the "failure" it threw was itself a second bug, see below).
+Fixed same day: `submitTransfers` now sends exactly one request,
+`confirmed: true` directly — sending a second call on top of an
+already-applied transfer is untested and deliberately not risked. Also
+fixed: a clean response was assumed to be `{}`; it's actually an
+empty-body 200 that axios hands back as `''`, which the original
+`hasErrors` check treated as an error (a false-positive rejection on every
+clean submission, is what surfaced the dry-run/commit issue in the first
+place — the "failed" first live attempt had actually already applied the
+transfer). Verified end-to-end via the new `POST /proposal/manual-transfer`
+override (below): propose → Telegram approve → `execution_logs` row with
+`success: true` and the new player in the returned `picks`.
+
+**Chips remain unverified.** The `chip` field on `setLineup` (Bench Boost/
+Triple Captain) and the `wildcard`/`freehit` flags on `/api/transfers/`
+still haven't been exercised live — only a plain transfer has. Also still
+unconfirmed: that Triple Captain's tripling is signalled purely by the
+`chip` field server-side (picks stay at `multiplier: 2`, not `3`). Needs
+live confirmation the first time a chip actually gets played for real —
+same watch-the-execution-log approach as the transfer verification above.
 
 `ChipEvaluatorService` remains a deliberate stub — nothing decides *when*
 a chip is automatically worth playing (a prediction/strategy problem, not
@@ -259,13 +272,15 @@ deploy config exists yet.
 1. ✅ Ingestion + prediction + optimization, recommend-only
 2. ✅ Approval state machine + alert loop
 3. ✅ Execution for lineup/captain only — verified live end-to-end
-4. ✅ Extend execution to transfers + chips — built 2026-09-08, contract
-   unverified against the live API (see "Execution auth" above); needs a
-   real live test the next time a transfer/chip is actually played
+4. ✅ Extend execution to transfers + chips — built 2026-09-08; transfers
+   verified live the same day against a disposable test account (see
+   "Execution auth" above), fixing two real bugs the community-derived
+   contract had baked in. Chips still unverified — needs a real live test
+   the next time a chip is actually played
 5. ⬜ Iterate the prediction model once there's backtestable history
 
-Currently at: **step 4 done** (pending its own live verification), plus the
-weekly free-transfer/chip prompt and the transfer-hit policy fix (both
+Currently at: **step 4's transfer path verified**, chips still pending, plus
+the weekly team-status report and the transfer-hit policy fix (all
 2026-09-08, see above) on top of persistence. Next: step 5 needs a few
 gameweeks of `PlayerSnapshot` history to accumulate first; the
 post-deadline "did you apply it?" check-in (below) is unblocked and ready

@@ -61,12 +61,14 @@ export interface FplTokenResponse {
   id_token: string;
 }
 
-// POST /api/transfers/ — never captured live (unlike everything else in
-// this file), sourced from amosbastian/fpl's fpl/models/user.py (an
-// actively-maintained community library, see ARCHITECTURE.md's Sources),
-// not a guess. Needs live confirmation the first time this actually runs
-// against a real transfer. Response shape is genuinely unknown — treated
-// as `unknown` at the call site rather than typed here.
+// POST /api/transfers/ — captured live 2026-09-08 against a disposable test
+// account (originally sourced from amosbastian/fpl's fpl/models/user.py, an
+// actively-maintained community library, see ARCHITECTURE.md's Sources, but
+// that library's assumed dry-run-then-commit pattern turned out wrong — see
+// FplAuthClient.submitTransfers). A single `confirmed: true` request applies
+// the transfer; a clean response is an empty-body 200 (axios hands it back
+// as `''`), not `{}`. Response shape on an actual error is still unverified
+// — treated as `unknown` at the call site rather than typed here.
 export interface FplTransferSubmission {
   element_in: number;
   element_out: number;
