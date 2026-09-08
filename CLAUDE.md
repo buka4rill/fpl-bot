@@ -556,6 +556,32 @@ already on the server (pushed as a secret from the local session) is
 still valid and working; do it the next time the token actually goes
 stale (see "Execution auth" above for why that happens routinely).
 
+**Separate Telegram bots for dev vs. prod (2026-09-08, same day).** Local
+dev and the deployed instance originally shared one bot/chat, which meant
+(a) no way to tell which environment sent a given alert, and (b) only one
+of them could hold the webhook at a time — right after the first deploy,
+the *dev* bot's webhook was still pointed at the *prod* Fly URL, so a
+button tap in the dev chat would have hit production. Fixed by creating a
+second bot (`@FplProdBot`) via BotFather, used **only** by the deployed
+app: `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` on Fly now point at it
+(`fly secrets set` — triggers an automatic rolling restart), its webhook
+is registered at the permanent Fly URL, and the original (dev) bot's
+webhook was explicitly cleared (`deleteWebhook`) so it's purely a
+`dev:webhook`/manual-testing target again, never silently pointed at
+prod. Local `.env` is unchanged — still the original/dev bot. Both bots
+message the *same* Telegram chat (chat id is tied to your account, not
+the bot), so alerts are told apart by which bot sent them, not which chat
+they land in. Verified live: triggered `POST /team-state/report` against
+the deployed app, confirmed the message arrived from `@FplProdBot`, not
+the dev bot.
+
+**Note — both environments currently point at the same FPL account** (the
+disposable test account used throughout this session's testing, not the
+real account). Only the Telegram side is split so far; revisit whether
+prod should eventually point at the real FPL account once ready to stop
+testing against the disposable one — a separate decision from this bot
+split, not made yet.
+
 **A few real bugs surfaced getting the Docker build working, all fixed
 2026-09-08:**
 - `package.json`'s `start:prod` script pointed at `node dist/main` — the
