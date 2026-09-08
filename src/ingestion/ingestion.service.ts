@@ -12,6 +12,7 @@ import {
 } from '../common/types/domain.types';
 import { POSITION_BY_ELEMENT_TYPE } from '../common/enums/position.enum';
 import { FplChip } from '../common/enums/chip.enum';
+import { computeSeason } from '../common/utils/season.util';
 import {
   BootstrapStaticResponse,
   ElementSummaryResponse,
@@ -81,6 +82,7 @@ export class IngestionService {
       isCurrent: event.is_current,
       isNext: event.is_next,
       finished: event.finished,
+      season: computeSeason(event.deadline_time),
     }));
 
     const teams: Team[] = raw.teams.map((team) => ({

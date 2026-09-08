@@ -42,6 +42,7 @@ describe('SquadOptimizerService', () => {
     isCurrent: false,
     isNext: true,
     finished: false,
+    season: '26_27',
   };
 
   // Defaults match configuration.ts's own defaults (maxHitsPerWeek=1,

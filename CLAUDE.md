@@ -72,12 +72,50 @@ built and discarded, never actually stored), `ExecutionLogEntity`, plus
 best-effort — a failure there must never block generating/alerting a
 proposal, unlike the other three, which are the app's actual state).
 
-`ProposalService.findByGameweekId` backs `DeadlineWatcherService`'s
+`ProposalService.findBySeasonAndGameweekId` backs `DeadlineWatcherService`'s
 restart-safe "already proposed this gameweek" check — replacing what used
 to be an in-memory flag that forgot on every restart. (An in-process-only
 synchronous claim still exists alongside it, for the unrelated race between
 two overlapping checks in the same running process — see the comments on
 `lastClaimedGameweekId`.)
+
+**Season-scoped gameweek identity (2026-09-08).** FPL's gameweek `id`
+resets to 1 every season (verified live — `bootstrap-static` has no season
+field anywhere in the payload), so anything keyed on `gameweekId` alone
+silently collides across a season rollover — most seriously,
+`findBySeasonAndGameweekId` (nee `findByGameweekId`) would find last
+season's GW-whatever proposal and skip generating a new one for the entire
+gameweek, silently. `Gameweek.season` (domain type) is derived from the
+gameweek's own `deadlineAt` via `computeSeason()` in
+`src/common/utils/season.util.ts` (Aug–May season, July cutover) —
+`Gameweek.id` itself is left alone since it's the real FPL event id needed
+for API calls (`fixtures(gameweek)`, `liveGameweek(gameweek)`, etc.), only
+its *uniqueness* needed fixing. `GameweekEntity` and `PlayerSnapshotEntity`
+both got `season` added to their primary key; `ProposalEntity` got a
+`season` column + composite `(season, gameweekId)` index.
+`PlayerSnapshot`/`Proposal` domain interfaces: `Proposal.season` is
+required (every proposal is for a real gameweek); `PlayerSnapshot.season`
+is deliberately *not* on the domain interface — same "persistence-only
+extra field" pattern as `PlayerSnapshotEntity.capturedAt` — since
+`PredictionService.recordSnapshotHistory` is the only place season is
+actually known when a snapshot entity is created.
+
+**Adjacent bug found and fixed in the same pass**: `PlayerSnapshotEntity`
+rows were being stamped with whichever gameweek was *currently live* at
+ingestion time (`IngestionService`'s `currentGameweek.id`, since a fresh
+snapshot is "as-of-now" player data), not the gameweek actually being
+*predicted for* — so a snapshot recorded while proposing for next week's
+GW4 (while GW3 is still live) was filed under `gameweekId: 3`, unable to
+ever join back to `GameweekEntity`'s GW4 row. Same "silently keyed under
+the wrong gameweek" hazard the season fix addresses, just within a season
+rather than across one. Fixed by having `recordSnapshotHistory` override
+`gameweekId`/`season` from `targetGameweek` at persistence time, same
+pattern as the season stamp. Pre-fix rows (this bot's very first batch of
+history, ~654 rows) are stuck with the wrong `gameweekId` — not worth
+correcting retroactively at this scale/stage; the migration only backfills
+their `season` column (falls back to "any known season" for rows the
+`gameweekId` join can't match, safe since only one season of data existed
+pre-fix).
 
 **Pinned versions matter here**: `@nestjs/typeorm@12.x` is ESM-only and
 won't load under this project's CommonJS setup on Node 20 (breaks Jest and

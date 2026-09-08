@@ -70,6 +70,7 @@ describe('AlertService', () => {
   const proposal: Proposal = {
     id: 'prop-1',
     gameweekId: 4,
+    season: '26_27',
     deadlineAt: '2026-09-12T12:30:00Z',
     transfers: [],
     lineup: [1, 2],

@@ -94,9 +94,11 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
 
     // Restart-safe dedupe — was a proposal for this gameweek already
     // persisted, e.g. by a run before a restart?
-    const alreadyProposed = await this.proposalService.findByGameweekId(
-      targetGameweek.id,
-    );
+    const alreadyProposed =
+      await this.proposalService.findBySeasonAndGameweekId(
+        targetGameweek.season,
+        targetGameweek.id,
+      );
     if (alreadyProposed) {
       return;
     }

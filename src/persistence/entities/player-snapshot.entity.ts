@@ -1,12 +1,21 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import { PlayerSnapshot } from '../../common/types/domain.types';
 
-// One row per (gameweek, player) — not overwritten across gameweeks, so this
-// is the backtestable history ARCHITECTURE.md §6 calls for. Written
-// best-effort from PredictionService.predictGameweek() at the moment a
-// proposal is generated, capturing what the model actually saw.
+// One row per (season, gameweek, player) — not overwritten across
+// gameweeks, so this is the backtestable history ARCHITECTURE.md §6 calls
+// for. Written best-effort from PredictionService.predictGameweek() at the
+// moment a proposal is generated, capturing what the model actually saw.
+// `season` (persistence-only — not on the PlayerSnapshot domain interface,
+// same pattern as `capturedAt` below; set explicitly by
+// PredictionService.recordSnapshotHistory from the target Gameweek's own
+// `season`) is part of the primary key because `gameweekId` alone resets to
+// 1 every season — without it, next season's GW4 snapshot for a player
+// would silently overwrite this season's GW4 snapshot for the same player.
 @Entity('player_snapshots')
 export class PlayerSnapshotEntity implements PlayerSnapshot {
+  @PrimaryColumn('varchar')
+  season: string;
+
   @PrimaryColumn('int')
   gameweekId: number;
 

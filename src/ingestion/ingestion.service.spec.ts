@@ -110,6 +110,7 @@ describe('IngestionService', () => {
         isCurrent: true,
         isNext: false,
         finished: false,
+        season: '26_27',
       },
       {
         id: 4,
@@ -117,6 +118,7 @@ describe('IngestionService', () => {
         isCurrent: false,
         isNext: true,
         finished: false,
+        season: '26_27',
       },
     ]);
 
@@ -163,6 +165,19 @@ describe('IngestionService', () => {
         },
       ],
     });
+  });
+
+  it('derives season from each gameweek\'s own deadline, not the request time', async () => {
+    fplPublicClient.bootstrapStatic.mockResolvedValue({
+      ...rawBootstrap,
+      events: [
+        { ...rawBootstrap.events[0], id: 20, deadline_time: '2027-01-15T17:30:00Z' },
+      ],
+    });
+
+    const snapshot = await service.getBootstrapSnapshot();
+
+    expect(snapshot.gameweeks[0].season).toBe('26_27');
   });
 
   it('falls back to gameweek 0 when no event is marked current', async () => {

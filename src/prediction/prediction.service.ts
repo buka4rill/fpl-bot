@@ -84,9 +84,22 @@ export class PredictionService {
       await this.gameweekRepository.save(
         this.gameweekRepository.create(targetGameweek),
       );
+      // Overrides gameweekId/season from the target gameweek being predicted
+      // for, not whatever the snapshot's own fields say: IngestionService
+      // stamps a fresh PlayerSnapshot's gameweekId with the *currently live*
+      // gameweek (it's "as-of-now" player data), which is a different
+      // gameweek than the one this prediction is actually for whenever a
+      // proposal is generated before its target gameweek goes live —
+      // without this override, this history would be keyed by the wrong
+      // gameweek entirely, unable to join back to the gameweeks row this
+      // same call just saved above.
       await this.playerSnapshotRepository.save(
         predictions.map((prediction) =>
-          this.playerSnapshotRepository.create(prediction),
+          this.playerSnapshotRepository.create({
+            ...prediction,
+            gameweekId: targetGameweek.id,
+            season: targetGameweek.season,
+          }),
         ),
       );
     } catch (error) {

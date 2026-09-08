@@ -32,6 +32,7 @@ export class ProposalService {
 
     return this.store({
       gameweekId: optimization.targetGameweek.id,
+      season: optimization.targetGameweek.season,
       deadlineAt: optimization.targetGameweek.deadlineAt,
       transfers: optimization.transfers,
       lineup: optimization.startingXI,
@@ -70,10 +71,19 @@ export class ProposalService {
 
   // Restart-safe "have we already proposed for this gameweek" lookup —
   // consumed by DeadlineWatcherService instead of an in-memory dedupe flag.
-  // Not unique by gameweek (see ProposalEntity's comment), so this returns
-  // whichever proposal was created first for the gameweek.
-  async findByGameweekId(gameweekId: number): Promise<Proposal | undefined> {
-    const proposal = await this.proposalRepository.findOneBy({ gameweekId });
+  // `season` is required alongside `gameweekId`: FPL resets gameweek ids to
+  // 1 every season, so a lookup on `gameweekId` alone would match a prior
+  // season's proposal and silently skip generating a new one. Not unique by
+  // (season, gameweekId) either (see ProposalEntity's comment), so this
+  // returns whichever proposal was created first for the pair.
+  async findBySeasonAndGameweekId(
+    season: string,
+    gameweekId: number,
+  ): Promise<Proposal | undefined> {
+    const proposal = await this.proposalRepository.findOneBy({
+      season,
+      gameweekId,
+    });
     return proposal ?? undefined;
   }
 

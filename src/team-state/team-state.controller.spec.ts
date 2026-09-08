@@ -17,6 +17,7 @@ describe('TeamStateController', () => {
     isCurrent: false,
     isNext,
     finished: false,
+    season: '26_27',
   });
 
   const state = {

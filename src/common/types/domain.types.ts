@@ -6,11 +6,15 @@ import { Position } from '../enums/position.enum';
 // Promote these to ORM entities once a persistence layer is chosen.
 
 export interface Gameweek {
-  id: number;
+  id: number; // resets to 1 each season — only unique combined with `season`
   deadlineAt: string; // ISO timestamp, always read from bootstrap-static
   isCurrent: boolean;
   isNext: boolean;
   finished: boolean;
+  // "YY_YY" (e.g. "26_27") — bootstrap-static has no season field, so this
+  // is derived from `deadlineAt` (see season.util.ts). Exists so storage
+  // keyed on gameweek identity doesn't collide across a season rollover.
+  season: string;
 }
 
 export interface Team {
@@ -100,7 +104,8 @@ export interface TransferPlan {
 
 export interface Proposal {
   id: string;
-  gameweekId: number;
+  gameweekId: number; // resets to 1 each season — only unique combined with `season`
+  season: string; // see Gameweek.season — required for a season-safe dedupe lookup
   deadlineAt: string; // ISO timestamp — the gameweek deadline this must be actioned before
   transfers: TransferPlan[];
   lineup: number[]; // starting XI player IDs

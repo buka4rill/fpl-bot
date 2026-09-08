@@ -24,6 +24,7 @@ describe('ApprovalService', () => {
   const baseProposal = (overrides: Partial<Proposal> = {}): Proposal => ({
     id: 'p1',
     gameweekId: 4,
+    season: '26_27',
     deadlineAt: '2099-01-01T00:00:00Z', // far future — not overdue
     transfers: [],
     lineup: [],

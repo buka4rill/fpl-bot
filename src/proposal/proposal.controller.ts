@@ -70,6 +70,7 @@ export class ProposalController {
 
     const proposal: Proposal = await this.proposalService.store({
       gameweekId: targetGameweek.id,
+      season: targetGameweek.season,
       deadlineAt: targetGameweek.deadlineAt,
       transfers: [],
       lineup: squad.lineup,
@@ -143,6 +144,7 @@ export class ProposalController {
       id === playerOutId ? playerInId : id;
     const proposal: Proposal = await this.proposalService.store({
       gameweekId: targetGameweek.id,
+      season: targetGameweek.season,
       deadlineAt: targetGameweek.deadlineAt,
       transfers: [{ playerOutId, playerInId }],
       lineup: squad.lineup.map(replace),

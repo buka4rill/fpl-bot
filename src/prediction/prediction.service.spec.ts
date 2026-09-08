@@ -91,6 +91,7 @@ describe('PredictionService', () => {
       isCurrent: true,
       isNext: false,
       finished: false,
+      season: '26_27',
     },
     {
       id: 4,
@@ -98,6 +99,7 @@ describe('PredictionService', () => {
       isCurrent: false,
       isNext: true,
       finished: false,
+      season: '26_27',
     },
   ];
 
@@ -210,7 +212,13 @@ describe('PredictionService', () => {
     await service.predictGameweek();
 
     expect(gameweekRepository.save).toHaveBeenCalledWith(gameweeks[1]);
-    expect(playerSnapshotRepository.save).toHaveBeenCalledWith(predicted);
+    expect(playerSnapshotRepository.save).toHaveBeenCalledWith(
+      predicted.map((prediction) => ({
+        ...prediction,
+        gameweekId: 4, // overridden to the target gameweek, not the snapshot's own (current) gameweekId of 3
+        season: '26_27',
+      })),
+    );
   });
 
   it('does not fail the proposal when recording history fails', async () => {

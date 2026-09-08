@@ -3,14 +3,20 @@ import { Proposal, TransferPlan } from '../../common/types/domain.types';
 import { ProposalStatus } from '../../common/enums/proposal-status.enum';
 import { FplChip } from '../../common/enums/chip.enum';
 
-// gameweekId is deliberately indexed, not unique: ProposalController's
+// (season, gameweekId) is deliberately indexed, not unique: ProposalController's
 // manual captain-swap override can legitimately create a second proposal
-// for the same gameweek (CLAUDE.md — low-risk execution testing).
+// for the same gameweek (CLAUDE.md — low-risk execution testing). `season`
+// is required alongside `gameweekId` — FPL resets gameweek ids to 1 every
+// season, so ProposalService's restart-safe "already proposed this
+// gameweek" lookup needs both to avoid matching a prior season's row.
 @Entity('proposals')
-@Index(['gameweekId'])
+@Index(['season', 'gameweekId'])
 export class ProposalEntity implements Proposal {
   @PrimaryColumn('uuid')
   id: string;
+
+  @Column('varchar')
+  season: string;
 
   @Column('int')
   gameweekId: number;

@@ -29,7 +29,11 @@ class FakeProposalRepository {
     }
     if (where.gameweekId !== undefined) {
       return Promise.resolve(
-        rows.find((row) => row.gameweekId === where.gameweekId) ?? null,
+        rows.find(
+          (row) =>
+            row.gameweekId === where.gameweekId &&
+            (where.season === undefined || row.season === where.season),
+        ) ?? null,
       );
     }
     return Promise.resolve(null);
@@ -53,6 +57,7 @@ describe('ProposalService', () => {
       isCurrent: false,
       isNext: true,
       finished: false,
+      season: '26_27',
     },
     squad: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     transfers: [],
@@ -88,6 +93,7 @@ describe('ProposalService', () => {
     const proposal = await service.generateProposal();
 
     expect(proposal.gameweekId).toBe(4);
+    expect(proposal.season).toBe('26_27');
     expect(proposal.deadlineAt).toBe('2026-09-12T12:30:00Z');
     expect(proposal.lineup).toEqual(optimization.startingXI);
     expect(proposal.benchGoalkeeperId).toBe(12);
@@ -109,11 +115,22 @@ describe('ProposalService', () => {
     expect(await service.findById('nonexistent')).toBeUndefined();
   });
 
-  it('finds a proposal by gameweek id', async () => {
+  it('finds a proposal by season + gameweek id', async () => {
     const proposal = await service.generateProposal();
 
-    expect(await service.findByGameweekId(4)).toEqual(proposal);
-    expect(await service.findByGameweekId(999)).toBeUndefined();
+    expect(await service.findBySeasonAndGameweekId('26_27', 4)).toEqual(
+      proposal,
+    );
+    expect(await service.findBySeasonAndGameweekId('26_27', 999)).toBeUndefined();
+  });
+
+  it('does not match a prior season\'s proposal for the same gameweek id', async () => {
+    // Regression test: FPL resets gameweek ids to 1 each season, so a plain
+    // gameweekId lookup would find last season's GW4 row and wrongly report
+    // "already proposed" for the new season's GW4.
+    await service.generateProposal();
+
+    expect(await service.findBySeasonAndGameweekId('27_28', 4)).toBeUndefined();
   });
 
   it('lists only PENDING proposals', async () => {

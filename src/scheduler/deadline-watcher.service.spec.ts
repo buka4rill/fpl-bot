@@ -13,6 +13,7 @@ import {
   PlayerSnapshot,
   Proposal,
 } from '../common/types/domain.types';
+import { computeSeason } from '../common/utils/season.util';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
 
@@ -21,7 +22,7 @@ describe('DeadlineWatcherService', () => {
   let ingestionService: { getBootstrapSnapshot: jest.Mock };
   let proposalService: {
     generateProposal: jest.Mock;
-    findByGameweekId: jest.Mock;
+    findBySeasonAndGameweekId: jest.Mock;
   };
   let alertService: { sendProposal: jest.Mock; sendMessage: jest.Mock };
   let approvalService: { expireOverdue: jest.Mock };
@@ -48,6 +49,7 @@ describe('DeadlineWatcherService', () => {
   const proposal: Proposal = {
     id: 'prop-1',
     gameweekId: 4,
+    season: '26_27',
     deadlineAt: '2026-09-12T12:30:00Z',
     transfers: [],
     lineup: [],
@@ -67,6 +69,7 @@ describe('DeadlineWatcherService', () => {
     isCurrent: false,
     isNext: true,
     finished: false,
+    season: computeSeason(deadlineAt),
   });
 
   const hoursFromNow = (hours: number): string =>
@@ -76,7 +79,7 @@ describe('DeadlineWatcherService', () => {
     ingestionService = { getBootstrapSnapshot: jest.fn() };
     proposalService = {
       generateProposal: jest.fn().mockResolvedValue(proposal),
-      findByGameweekId: jest.fn().mockResolvedValue(undefined),
+      findBySeasonAndGameweekId: jest.fn().mockResolvedValue(undefined),
     };
     alertService = { sendProposal: jest.fn(), sendMessage: jest.fn() };
     approvalService = { expireOverdue: jest.fn() };
@@ -231,7 +234,7 @@ describe('DeadlineWatcherService', () => {
   it('does not re-propose a gameweek already persisted before a restart', async () => {
     // Simulates restarting mid-window: no in-process claim, but the DB
     // already has a proposal for this gameweek from before the restart.
-    proposalService.findByGameweekId.mockResolvedValue(proposal);
+    proposalService.findBySeasonAndGameweekId.mockResolvedValue(proposal);
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
       players,
@@ -241,6 +244,25 @@ describe('DeadlineWatcherService', () => {
     await service.checkDeadline();
 
     expect(proposalService.generateProposal).not.toHaveBeenCalled();
+  });
+
+  it('checks the dedupe lookup by season, not gameweek id alone', async () => {
+    // Regression test: FPL resets gameweek ids to 1 every season, so the
+    // dedupe check must scope by season too — otherwise next season's GW4
+    // would find this season's GW4 proposal and skip generating one.
+    const gameweek = gameweekWithDeadline(hoursFromNow(12));
+    ingestionService.getBootstrapSnapshot.mockResolvedValue({
+      gameweeks: [gameweek],
+      players,
+      snapshots,
+    });
+
+    await service.checkDeadline();
+
+    expect(proposalService.findBySeasonAndGameweekId).toHaveBeenCalledWith(
+      gameweek.season,
+      gameweek.id,
+    );
   });
 
   it('does not re-propose for the same gameweek twice', async () => {

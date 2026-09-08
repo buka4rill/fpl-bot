@@ -42,6 +42,7 @@ describe('ExecutionService', () => {
   const baseProposal = (overrides: Partial<Proposal> = {}): Proposal => ({
     id: 'p1',
     gameweekId: 4,
+    season: '26_27',
     deadlineAt: '2099-01-01T00:00:00Z', // far future — not overdue
     transfers: [],
     lineup: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
