@@ -3,7 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FplAuthClient } from './clients/fpl-auth.client';
-import { FplPick, FplTransferSubmission } from './clients/fpl-auth.types';
+import {
+  FplChipStatus,
+  FplPick,
+  FplTransferSubmission,
+  FplTransfersState,
+} from './clients/fpl-auth.types';
 import { Proposal, ExecutionLog } from '../common/types/domain.types';
 import { ExecutionLogEntity } from '../persistence/entities/execution-log.entity';
 import { IngestionService } from '../ingestion/ingestion.service';
@@ -15,6 +20,11 @@ export interface CurrentSquadShape {
   benchOutfieldIds: number[];
   captainId: number;
   viceCaptainId: number;
+}
+
+export interface TeamStateShape {
+  chips: FplChipStatus[];
+  transfers: FplTransfersState;
 }
 
 const TRANSFER_CHIPS = new Set([FplChip.WILDCARD, FplChip.FREE_HIT]);
@@ -141,6 +151,16 @@ export class ExecutionService {
       captainId: captain.element,
       viceCaptainId: viceCaptain.element,
     };
+  }
+
+  // Reads free-transfer count and chip availability straight from FPL, for
+  // TeamStateService's weekly report — same "only exposes a derived shape,
+  // keeping FplAuthClient the one place holding the authenticated session"
+  // principle as getCurrentSquadShape above (CLAUDE.md's isolation
+  // constraint on ExecutionModule).
+  async getTeamState(teamId: number): Promise<TeamStateShape> {
+    const current = await this.fplAuthClient.getMyTeam(teamId);
+    return { chips: current.chips, transfers: current.transfers };
   }
 
   // Builds the transfer submission payload (fresh prices at execution

@@ -25,9 +25,7 @@ describe('DeadlineWatcherService', () => {
   let alertService: { sendProposal: jest.Mock };
   let approvalService: { expireOverdue: jest.Mock };
   let teamStateService: {
-    isFreshFor: jest.Mock;
-    ensureWeeklyPromptStarted: jest.Mock;
-    getFreeTransfers: jest.Mock;
+    reportTeamState: jest.Mock;
   };
   let config: { get: jest.Mock };
 
@@ -80,12 +78,13 @@ describe('DeadlineWatcherService', () => {
     };
     alertService = { sendProposal: jest.fn() };
     approvalService = { expireOverdue: jest.fn() };
-    // Fresh by default so every pre-existing test keeps exercising the same
-    // straight-through flow as before this gate was added.
     teamStateService = {
-      isFreshFor: jest.fn().mockResolvedValue(true),
-      ensureWeeklyPromptStarted: jest.fn(),
-      getFreeTransfers: jest.fn().mockResolvedValue(1),
+      reportTeamState: jest.fn().mockResolvedValue({
+        freeTransfers: 1,
+        bank: 0.2,
+        teamValue: 99.8,
+        chips: [],
+      }),
     };
     config = { get: jest.fn().mockReturnValue(24) }; // deadlineLeadHours
 
@@ -172,8 +171,13 @@ describe('DeadlineWatcherService', () => {
     );
   });
 
-  it('blocks proposal generation until the weekly free-transfer/chip prompt is answered', async () => {
-    teamStateService.isFreshFor.mockResolvedValue(false);
+  it('reports team state, then passes the live free-transfer count into proposal generation', async () => {
+    teamStateService.reportTeamState.mockResolvedValue({
+      freeTransfers: 3,
+      bank: 0.2,
+      teamValue: 99.8,
+      chips: [],
+    });
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
       players,
@@ -182,21 +186,7 @@ describe('DeadlineWatcherService', () => {
 
     await service.checkDeadline();
 
-    expect(teamStateService.ensureWeeklyPromptStarted).toHaveBeenCalledWith(4);
-    expect(proposalService.generateProposal).not.toHaveBeenCalled();
-    expect(alertService.sendProposal).not.toHaveBeenCalled();
-  });
-
-  it('passes the confirmed free-transfer count into proposal generation once fresh', async () => {
-    teamStateService.getFreeTransfers.mockResolvedValue(3);
-    ingestionService.getBootstrapSnapshot.mockResolvedValue({
-      gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
-      players,
-      snapshots,
-    });
-
-    await service.checkDeadline();
-
+    expect(teamStateService.reportTeamState).toHaveBeenCalledWith(4);
     expect(proposalService.generateProposal).toHaveBeenCalledWith(3);
   });
 

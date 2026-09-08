@@ -6,7 +6,7 @@ import { Gameweek } from '../common/types/domain.types';
 
 describe('TeamStateController', () => {
   let controller: TeamStateController;
-  let teamStateService: { ensureWeeklyPromptStarted: jest.Mock };
+  let teamStateService: { reportTeamState: jest.Mock };
   let ingestionService: { getBootstrapSnapshot: jest.Mock };
 
   const gameweek = (id: number, isNext: boolean): Gameweek => ({
@@ -17,8 +17,17 @@ describe('TeamStateController', () => {
     finished: false,
   });
 
+  const state = {
+    freeTransfers: 2,
+    bank: 0.2,
+    teamValue: 99.8,
+    chips: [],
+  };
+
   beforeEach(async () => {
-    teamStateService = { ensureWeeklyPromptStarted: jest.fn() };
+    teamStateService = {
+      reportTeamState: jest.fn().mockResolvedValue(state),
+    };
     ingestionService = { getBootstrapSnapshot: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -32,15 +41,15 @@ describe('TeamStateController', () => {
     controller = module.get<TeamStateController>(TeamStateController);
   });
 
-  it('triggers the weekly prompt for the upcoming gameweek', async () => {
+  it('reports team state for the upcoming gameweek', async () => {
     ingestionService.getBootstrapSnapshot.mockResolvedValue({
       gameweeks: [gameweek(3, false), gameweek(4, true)],
     });
 
-    const result = await controller.triggerWeeklyPrompt();
+    const result = await controller.triggerReport();
 
-    expect(teamStateService.ensureWeeklyPromptStarted).toHaveBeenCalledWith(4);
-    expect(result).toEqual({ gameweekId: 4 });
+    expect(teamStateService.reportTeamState).toHaveBeenCalledWith(4);
+    expect(result).toEqual({ gameweekId: 4, state });
   });
 
   it('throws when there is no upcoming gameweek', async () => {
@@ -48,9 +57,9 @@ describe('TeamStateController', () => {
       gameweeks: [gameweek(3, false)],
     });
 
-    await expect(controller.triggerWeeklyPrompt()).rejects.toThrow(
+    await expect(controller.triggerReport()).rejects.toThrow(
       'No upcoming gameweek found',
     );
-    expect(teamStateService.ensureWeeklyPromptStarted).not.toHaveBeenCalled();
+    expect(teamStateService.reportTeamState).not.toHaveBeenCalled();
   });
 });

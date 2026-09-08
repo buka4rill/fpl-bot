@@ -10,7 +10,6 @@ describe('AlertService', () => {
   let telegram: {
     sendProposalAlert: jest.Mock;
     sendMessage: jest.Mock;
-    sendYesNoPrompt: jest.Mock;
   };
 
   const players: Player[] = [
@@ -86,7 +85,6 @@ describe('AlertService', () => {
     telegram = {
       sendProposalAlert: jest.fn(),
       sendMessage: jest.fn(),
-      sendYesNoPrompt: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -197,14 +195,5 @@ describe('AlertService', () => {
     await service.sendMessage('hello');
 
     expect(telegram.sendMessage).toHaveBeenCalledWith('hello');
-  });
-
-  it('delegates sendYesNoPrompt to the telegram adapter', async () => {
-    await service.sendYesNoPrompt('Still available?', 'chipavail:4:wildcard1');
-
-    expect(telegram.sendYesNoPrompt).toHaveBeenCalledWith(
-      'Still available?',
-      'chipavail:4:wildcard1',
-    );
   });
 });

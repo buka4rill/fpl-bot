@@ -94,20 +94,6 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Block until this week's free-transfer/chip prompt is answered —
-    // never fall back to a stale/default free-transfer count. The warn
-    // logs on every poll while blocked (not just once at prompt-start), so
-    // a stuck state (e.g. TELEGRAM_BOT_TOKEN unset, which makes
-    // TelegramAdapter silently no-op) stays visible rather than going
-    // quiet after the first attempt.
-    if (!(await this.teamStateService.isFreshFor(targetGameweek.id))) {
-      this.logger.warn(
-        `Gameweek ${targetGameweek.id} proposal blocked: weekly free-transfer/chip prompt not yet answered.`,
-      );
-      await this.teamStateService.ensureWeeklyPromptStarted(targetGameweek.id);
-      return;
-    }
-
     // Claim synchronously, before any further await (see the field's
     // comment) — rolled back on failure so a transient error still gets
     // retried next poll rather than silently never alerting for this
@@ -120,11 +106,15 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `Generating proposal for gameweek ${targetGameweek.id} (deadline ${targetGameweek.deadlineAt})...`,
       );
-      const freeTransfers = await this.teamStateService.getFreeTransfers(
+      // Reads free transfers + chip availability live from FPL and reports
+      // it before generating the proposal — see TeamStateService's doc
+      // comment for why this no longer needs a Telegram Q&A first.
+      const teamState = await this.teamStateService.reportTeamState(
         targetGameweek.id,
       );
-      const proposal =
-        await this.proposalService.generateProposal(freeTransfers);
+      const proposal = await this.proposalService.generateProposal(
+        teamState.freeTransfers,
+      );
       await this.alertService.sendProposal(proposal, players, snapshots);
     } catch (error) {
       this.lastClaimedGameweekId = undefined;

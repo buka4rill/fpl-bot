@@ -5,16 +5,11 @@ import { of } from 'rxjs';
 import { AxiosResponse } from 'axios';
 import { ApprovalController } from './approval.controller';
 import { ApprovalService } from './approval.service';
-import { TeamStateService } from '../team-state/team-state.service';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
 describe('ApprovalController', () => {
   let controller: ApprovalController;
   let approvalService: { decide: jest.Mock };
-  let teamStateService: {
-    handleChipReply: jest.Mock;
-    handleTextReply: jest.Mock;
-  };
   let httpService: { post: jest.Mock };
 
   const CONFIGURED_CHAT_ID = '12345';
@@ -22,10 +17,6 @@ describe('ApprovalController', () => {
 
   beforeEach(async () => {
     approvalService = { decide: jest.fn() };
-    teamStateService = {
-      handleChipReply: jest.fn().mockResolvedValue('Noted.'),
-      handleTextReply: jest.fn(),
-    };
     httpService = {
       post: jest.fn().mockReturnValue(of({ data: {} } as AxiosResponse)),
     };
@@ -34,7 +25,6 @@ describe('ApprovalController', () => {
       controllers: [ApprovalController],
       providers: [
         { provide: ApprovalService, useValue: approvalService },
-        { provide: TeamStateService, useValue: teamStateService },
         { provide: HttpService, useValue: httpService },
         {
           provide: ConfigService,
@@ -166,58 +156,12 @@ describe('ApprovalController', () => {
     expect(result).toEqual({ ok: true });
   });
 
-  it('routes a chipavail:<gw>:<step>:<answer> callback to TeamStateService', async () => {
-    const result = await controller.handleTelegramCallback(
-      update('chipavail:20:wildcard1:yes'),
-    );
-
-    expect(teamStateService.handleChipReply).toHaveBeenCalledWith(
-      20,
-      'wildcard1',
-      'yes',
-    );
-    expect(result).toEqual({ ok: true });
-  });
-
-  it('ignores a chipavail callback from an unrecognized chat', async () => {
-    await controller.handleTelegramCallback(
-      update('chipavail:20:wildcard1:no', 99999),
-    );
-
-    expect(teamStateService.handleChipReply).not.toHaveBeenCalled();
-  });
-
-  it('acknowledges with the generic toast when a chipavail callback is stale/mismatched', async () => {
-    teamStateService.handleChipReply.mockRejectedValue(
-      new Error("doesn't match the currently pending prompt"),
-    );
-
-    const result = await controller.handleTelegramCallback(
-      update('chipavail:20:wildcard1:yes', 12345, 'cbq-stale'),
-    );
-
-    expect(httpService.post).toHaveBeenCalledWith(expect.any(String), {
-      callback_query_id: 'cbq-stale',
-      text: 'Already handled — no change made.',
-    });
-    expect(result).toEqual({ ok: true });
-  });
-
-  it('routes a plain text message from the configured chat to TeamStateService', async () => {
+  it('ignores an update with no callback data at all', async () => {
     const result = await controller.handleTelegramCallback({
-      message: { text: '2', chat: { id: 12345 } },
+      callback_query: { id: 'cbq-empty' },
     });
 
-    expect(teamStateService.handleTextReply).toHaveBeenCalledWith('2');
-    expect(result).toEqual({ ok: true });
-  });
-
-  it('ignores a plain text message from an unrecognized chat', async () => {
-    const result = await controller.handleTelegramCallback({
-      message: { text: '2', chat: { id: 99999 } },
-    });
-
-    expect(teamStateService.handleTextReply).not.toHaveBeenCalled();
+    expect(approvalService.decide).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: true });
   });
 });

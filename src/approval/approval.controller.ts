@@ -3,25 +3,22 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ApprovalService } from './approval.service';
-import { TeamStateService } from '../team-state/team-state.service';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
 // Minimal shape of the fields we read from a Telegram Update — see
 // https://core.telegram.org/bots/api#update. Deliberately not the full
 // Update type: ApprovalModule doesn't depend on telegraf, only AlertModule
-// (which sends messages) does. Covers both callback_query updates (approve/
-// reject buttons, chip-availability yes/no buttons) and plain text message
-// updates (the weekly free-transfer-count reply).
+// (which sends messages) does. Only callback_query updates (approve/reject
+// buttons) are handled — see git history for the weekly free-transfer/chip
+// prompt this used to also route (approve:<id>/reject:<id> plus chipavail:
+// callbacks and a plain-text free-transfer reply), superseded 2026-09-08 by
+// TeamStateService reading that data straight from FPL.
 interface TelegramCallbackUpdate {
   callback_query?: {
     id: string;
     data?: string;
     from?: { id: number };
     message?: { chat?: { id: number } };
-  };
-  message?: {
-    text?: string;
-    chat?: { id: number };
   };
 }
 
@@ -47,7 +44,6 @@ export class ApprovalController {
 
   constructor(
     private readonly approvalService: ApprovalService,
-    private readonly teamStateService: TeamStateService,
     private readonly config: ConfigService,
     private readonly http: HttpService,
   ) {}
@@ -82,42 +78,21 @@ export class ApprovalController {
 
   private async process(update: TelegramCallbackUpdate): Promise<string> {
     const query = update.callback_query;
-    if (query?.data) {
-      const chatId = this.assertConfiguredChat(query.message?.chat?.id);
-
-      if (query.data.startsWith('chipavail:')) {
-        const [, gameweekIdStr, step, answer] = query.data.split(':');
-        if (!gameweekIdStr || !step || (answer !== 'yes' && answer !== 'no')) {
-          throw new Error(`unrecognized chip callback data: ${query.data}`);
-        }
-        return this.teamStateService.handleChipReply(
-          Number(gameweekIdStr),
-          step,
-          answer,
-        );
-      }
-
-      const [action, proposalId] = query.data.split(':');
-      const decision = ACTION_TO_DECISION[action];
-      if (!decision || !proposalId) {
-        throw new Error(`unrecognized callback data: ${query.data}`);
-      }
-
-      const decidedBy = query.from ? String(query.from.id) : String(chatId);
-      await this.approvalService.decide(proposalId, decision, decidedBy);
-      return DECISION_TOAST[decision];
+    if (!query?.data) {
+      return '';
     }
 
-    // Plain text message (no callback_query) — the only thing this drives
-    // today is the weekly free-transfer-count reply; TeamStateService
-    // itself no-ops unless that step is actually pending. No callback_query
-    // id exists for these, so handleTelegramCallback's answerCallbackQuery
-    // guard already skips itself for this path.
-    if (update.message?.text !== undefined) {
-      this.assertConfiguredChat(update.message.chat?.id);
-      await this.teamStateService.handleTextReply(update.message.text);
+    const chatId = this.assertConfiguredChat(query.message?.chat?.id);
+
+    const [action, proposalId] = query.data.split(':');
+    const decision = ACTION_TO_DECISION[action];
+    if (!decision || !proposalId) {
+      throw new Error(`unrecognized callback data: ${query.data}`);
     }
-    return '';
+
+    const decidedBy = query.from ? String(query.from.id) : String(chatId);
+    await this.approvalService.decide(proposalId, decision, decidedBy);
+    return DECISION_TOAST[decision];
   }
 
   private assertConfiguredChat(chatId: number | undefined): number {

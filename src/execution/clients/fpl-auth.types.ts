@@ -13,11 +13,43 @@ export interface FplPick {
   purchase_price: number;
 }
 
+// Per-chip availability as reported by the authenticated my-team endpoint —
+// `name` matches FplChip's enum values 1:1 ('wildcard' | 'freehit' |
+// 'bboost' | '3xc'). `number` distinguishes the first/second-half instance
+// of a chip (1 or 2) once the 2025/26 twice-per-season rule applies.
+// `status_for_entry` observed live so far: 'available' | 'unavailable' —
+// treated as a plain string rather than a closed union since a third state
+// (e.g. once a chip is actually played) hasn't been observed yet.
+export interface FplChipStatus {
+  id: number;
+  status_for_entry: string;
+  played_by_entry: number[];
+  name: string;
+  number: number;
+  start_event: number;
+  stop_event: number;
+  chip_type: string;
+  is_pending: boolean;
+}
+
+// `limit`/`status` together are FPL's own free-transfer accounting for the
+// upcoming event — `status: 'unlimited'` (limit: null) observed preseason;
+// a normal week is expected to report a numeric `limit` instead, unverified
+// beyond what's been seen live so far (captured 2026-09-08).
+export interface FplTransfersState {
+  cost: number;
+  status: string;
+  limit: number | null;
+  made: number;
+  bank: number;
+  value: number;
+}
+
 export interface FplMyTeam {
   picks: FplPick[];
   picks_last_updated: string;
-  chips: unknown[];
-  transfers: unknown;
+  chips: FplChipStatus[];
+  transfers: FplTransfersState;
 }
 
 export interface FplTokenResponse {

@@ -71,37 +71,4 @@ describe('TelegramAdapter', () => {
     ).resolves.toBeUndefined();
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
-
-  it('sends a question with Yes/No inline buttons carrying the given callback data', async () => {
-    const adapter = await buildAdapter('test-token');
-
-    await adapter.sendYesNoPrompt('Still available?', 'chipavail:4:wildcard1');
-
-    expect(sendMessageMock).toHaveBeenCalledWith(
-      '12345',
-      'Still available?',
-      expect.objectContaining({ parse_mode: 'Markdown' }),
-    );
-    const [, , extra] = sendMessageMock.mock.calls[0] as [
-      string,
-      string,
-      { reply_markup?: { inline_keyboard: unknown[][] } },
-    ];
-    const buttons = extra.reply_markup?.inline_keyboard[0] as {
-      callback_data: string;
-    }[];
-    expect(buttons.map((b) => b.callback_data)).toEqual([
-      'chipavail:4:wildcard1:yes',
-      'chipavail:4:wildcard1:no',
-    ]);
-  });
-
-  it('does nothing for sendYesNoPrompt when no bot token is configured', async () => {
-    const adapter = await buildAdapter('');
-
-    await expect(
-      adapter.sendYesNoPrompt('Still available?', 'chipavail:4:wildcard1'),
-    ).resolves.toBeUndefined();
-    expect(sendMessageMock).not.toHaveBeenCalled();
-  });
 });

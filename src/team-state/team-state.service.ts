@@ -1,119 +1,44 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { AlertService } from '../alert/alert.service';
-import { ProposalService } from '../proposal/proposal.service';
-import { IngestionService } from '../ingestion/ingestion.service';
-import { TeamStateEntity } from '../persistence/entities/team-state.entity';
-import { TeamState } from '../common/types/domain.types';
+import { ExecutionService } from '../execution/execution.service';
+import {
+  FplChipStatus,
+  FplTransfersState,
+} from '../execution/clients/fpl-auth.types';
 
-export type ChipPromptStep =
-  | 'wildcard1'
-  | 'freeHit1'
-  | 'benchBoost1'
-  | 'tripleCaptain1'
-  | 'wildcard2'
-  | 'freeHit2'
-  | 'benchBoost2'
-  | 'tripleCaptain2';
-export type PromptStep = 'free_transfers' | ChipPromptStep;
+export interface TeamState {
+  freeTransfers: number;
+  bank: number;
+  teamValue: number;
+  chips: FplChipStatus[];
+}
 
-const FIRST_HALF_STEPS: ChipPromptStep[] = [
-  'wildcard1',
-  'freeHit1',
-  'benchBoost1',
-  'tripleCaptain1',
-];
-const SECOND_HALF_STEPS: ChipPromptStep[] = [
-  'wildcard2',
-  'freeHit2',
-  'benchBoost2',
-  'tripleCaptain2',
-];
-
-// Per CLAUDE.md: the first-half chip set must be played before the
-// Gameweek 19 deadline and doesn't carry over, so it stops being askable
-// from Gameweek 20 on — regardless of whether the owner ever explicitly
-// answered "no" for it. The second-half set is the mirror image: not
-// askable until it actually unlocks.
-const FIRST_HALF_CUTOFF_GAMEWEEK = 19;
-const SECOND_HALF_UNLOCK_GAMEWEEK = 20;
-
-const CHIP_STEP_COLUMN: Record<ChipPromptStep, keyof TeamState> = {
-  wildcard1: 'wildcard1Available',
-  freeHit1: 'freeHit1Available',
-  benchBoost1: 'benchBoost1Available',
-  tripleCaptain1: 'tripleCaptain1Available',
-  wildcard2: 'wildcard2Available',
-  freeHit2: 'freeHit2Available',
-  benchBoost2: 'benchBoost2Available',
-  tripleCaptain2: 'tripleCaptain2Available',
+const CHIP_DISPLAY_NAME: Record<string, string> = {
+  wildcard: 'Wildcard',
+  freehit: 'Free Hit',
+  bboost: 'Bench Boost',
+  '3xc': 'Triple Captain',
 };
 
-const CHIP_STEP_QUESTION: Record<ChipPromptStep, string> = {
-  wildcard1: 'Is your first Wildcard still available (not yet played)?',
-  freeHit1: 'Is your first Free Hit still available (not yet played)?',
-  benchBoost1: 'Is your first Bench Boost still available (not yet played)?',
-  tripleCaptain1:
-    'Is your first Triple Captain still available (not yet played)?',
-  wildcard2: 'Is your second Wildcard still available (not yet played)?',
-  freeHit2: 'Is your second Free Hit still available (not yet played)?',
-  benchBoost2: 'Is your second Bench Boost still available (not yet played)?',
-  tripleCaptain2:
-    'Is your second Triple Captain still available (not yet played)?',
+const CHIP_STATUS_EMOJI: Record<string, string> = {
+  available: '✅',
+  unavailable: '⏳',
+  played: '☑️',
 };
 
-// Fixed step order for a given gameweek — a pure function of gameweekId
-// alone, not filtered by availability up front. Availability is applied as
-// a forward-scan skip when advancing (see nextStep), which keeps "find the
-// next step after X" correct even when X's own flag just flipped false.
-function promptStepOrder(gameweekId: number): PromptStep[] {
-  return [
-    'free_transfers',
-    ...(gameweekId <= FIRST_HALF_CUTOFF_GAMEWEEK ? FIRST_HALF_STEPS : []),
-    ...(gameweekId >= SECOND_HALF_UNLOCK_GAMEWEEK ? SECOND_HALF_STEPS : []),
-  ];
-}
-
-function isChipStepAvailable(step: ChipPromptStep, state: TeamState): boolean {
-  return state[CHIP_STEP_COLUMN[step]] !== false;
-}
-
-function nextStep(
-  afterStep: PromptStep,
-  gameweekId: number,
-  state: TeamState,
-): PromptStep | null {
-  const order = promptStepOrder(gameweekId);
-  const idx = order.indexOf(afterStep);
-  for (let i = idx + 1; i < order.length; i++) {
-    const step = order[i];
-    if (step !== 'free_transfers' && !isChipStepAvailable(step, state)) {
-      continue;
-    }
-    return step;
-  }
-  return null;
-}
-
+// Replaces the old weekly Telegram Q&A (2026-09-08 -> superseded 2026-09-08):
+// that feature assumed free-transfer count and chip availability weren't
+// obtainable without asking the owner directly. Turned out wrong — the
+// authenticated my-team endpoint (the same one ExecutionService already
+// calls to apply changes) returns both in `transfers`/`chips`, it was just
+// typed `unknown` and discarded (see fpl-auth.types.ts). No more DB-backed
+// prompt state machine: this is read fresh from FPL on every check.
 @Injectable()
 export class TeamStateService {
-  private readonly logger = new Logger(TeamStateService.name);
-  // In-process claim guard, same category as
-  // DeadlineWatcherService.lastClaimedGameweekId — closes the race between
-  // two overlapping checkDeadline() calls (e.g. the immediate on-init check
-  // racing the first hourly poll) both trying to start the same week's
-  // prompt before either's DB write has landed. Resets on restart, which is
-  // fine: ensureWeeklyPromptStarted is otherwise idempotent via the DB row.
-  private readonly promptStartInFlight = new Set<number>();
-
   constructor(
-    @InjectRepository(TeamStateEntity)
-    private readonly repository: Repository<TeamStateEntity>,
+    private readonly executionService: ExecutionService,
     private readonly alertService: AlertService,
-    private readonly proposalService: ProposalService,
-    private readonly ingestionService: IngestionService,
     private readonly config: ConfigService,
   ) {}
 
@@ -121,183 +46,62 @@ export class TeamStateService {
     return Number(this.config.get<string>('fpl.teamId'));
   }
 
-  private async getOrCreate(): Promise<TeamStateEntity> {
-    const teamId = this.teamId();
-    const existing = await this.repository.findOneBy({ teamId });
-    if (existing) return existing;
-
-    const created = this.repository.create({
-      teamId,
-      freeTransfers: null,
-      freeTransfersAsOfGameweekId: null,
-      wildcard1Available: true,
-      freeHit1Available: true,
-      benchBoost1Available: true,
-      tripleCaptain1Available: true,
-      wildcard2Available: true,
-      freeHit2Available: true,
-      benchBoost2Available: true,
-      tripleCaptain2Available: true,
-      pendingPromptStep: null,
-      pendingPromptGameweekId: null,
-    });
-    return this.repository.save(created);
+  // Goes through ExecutionService rather than FplAuthClient directly —
+  // CLAUDE.md's hard constraint keeps the authenticated FPL session
+  // isolated to ExecutionModule; this only ever sees the derived
+  // chips/transfers shape, never the session itself.
+  async getTeamState(): Promise<TeamState> {
+    const { chips, transfers } = await this.executionService.getTeamState(
+      this.teamId(),
+    );
+    return {
+      freeTransfers: this.deriveFreeTransfers(transfers),
+      // FPL reports bank/value in tenths of a million, same unit as
+      // FplPick's selling_price/purchase_price.
+      bank: transfers.bank / 10,
+      teamValue: transfers.value / 10,
+      chips,
+    };
   }
 
-  async isFreshFor(gameweekId: number): Promise<boolean> {
-    const state = await this.getOrCreate();
-    return (
-      state.freeTransfersAsOfGameweekId === gameweekId &&
-      state.pendingPromptStep === null
+  // `status: 'unlimited'` (seen preseason) is the same "hits are free this
+  // week" state SquadOptimizerService already gives an active Wildcard/Free
+  // Hit — modeled the same way, via a free-transfer count no plan can
+  // exceed (15 = FPL squad size). Anything else with no numeric `limit` is
+  // an unrecognized shape from this still-not-fully-verified endpoint —
+  // fail loud rather than silently guess a number.
+  private deriveFreeTransfers(transfers: FplTransfersState): number {
+    if (transfers.status === 'unlimited') return 15;
+    if (transfers.limit !== null) return transfers.limit;
+    throw new Error(
+      `Unrecognized transfers shape from my-team: ${JSON.stringify(transfers)}`,
     );
   }
 
-  // Idempotent: a no-op if this exact gameweek's prompt is already in
-  // flight (whether that's from an earlier call in this same process, or a
-  // prior run persisted to the DB before a restart).
-  async ensureWeeklyPromptStarted(gameweekId: number): Promise<void> {
-    if (this.promptStartInFlight.has(gameweekId)) return;
-
-    const state = await this.getOrCreate();
-    if (
-      state.pendingPromptGameweekId === gameweekId &&
-      state.pendingPromptStep !== null
-    ) {
-      return;
-    }
-
-    this.promptStartInFlight.add(gameweekId);
-    try {
-      state.pendingPromptStep = 'free_transfers';
-      state.pendingPromptGameweekId = gameweekId;
-      await this.repository.save(state);
-      await this.alertService.sendMessage(
-        `🔢 How many free transfers do you have available for GW${gameweekId}? Reply with a number (0-5).`,
-      );
-    } finally {
-      this.promptStartInFlight.delete(gameweekId);
-    }
+  // Fetches the live state and sends it as an informational Telegram
+  // message — never blocks proposal generation, unlike the prompt it
+  // replaced. Called once per gameweek by DeadlineWatcherService,
+  // immediately before generating that week's proposal.
+  async reportTeamState(gameweekId: number): Promise<TeamState> {
+    const state = await this.getTeamState();
+    await this.alertService.sendMessage(this.renderReport(gameweekId, state));
+    return state;
   }
 
-  // Throws rather than silently falling back to a stale/default number —
-  // matches the project's "fail loud" convention (FplAuthClient,
-  // ExecutionService) — since DeadlineWatcherService only calls this after
-  // isFreshFor has already confirmed the data is current.
-  async getFreeTransfers(gameweekId: number): Promise<number> {
-    const state = await this.getOrCreate();
-    if (
-      state.freeTransfersAsOfGameweekId !== gameweekId ||
-      state.freeTransfers === null
-    ) {
-      throw new Error(
-        `Free transfers not confirmed for gameweek ${gameweekId}.`,
-      );
+  private renderReport(gameweekId: number, state: TeamState): string {
+    const lines = [
+      `📋 *GW${gameweekId} Team Status*`,
+      '',
+      `🔄 Free Transfers: ${state.freeTransfers}`,
+      `💰 Bank: £${state.bank.toFixed(1)}m  📈 Squad Value: £${state.teamValue.toFixed(1)}m`,
+      '',
+      '🃏 *Chips:*',
+    ];
+    for (const chip of state.chips) {
+      const emoji = CHIP_STATUS_EMOJI[chip.status_for_entry] ?? '❔';
+      const name = CHIP_DISPLAY_NAME[chip.name] ?? chip.name;
+      lines.push(`${emoji} ${name} ${chip.number} — ${chip.status_for_entry}`);
     }
-    return state.freeTransfers;
-  }
-
-  // Only acts while a 'free_transfers' step is actually pending — any other
-  // plain text message in the chat (a stray reply, small talk) is silently
-  // ignored rather than misapplied to whatever step happens to be pending.
-  async handleTextReply(text: string): Promise<void> {
-    const state = await this.getOrCreate();
-    if (state.pendingPromptStep !== 'free_transfers') return;
-
-    const parsed = Number(text.trim());
-    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 5) {
-      await this.alertService.sendMessage(
-        'Please reply with a whole number from 0 to 5 for free transfers.',
-      );
-      return;
-    }
-
-    state.freeTransfers = parsed;
-    state.freeTransfersAsOfGameweekId = state.pendingPromptGameweekId;
-    await this.advance(state, 'free_transfers');
-  }
-
-  // Validates both the gameweek and the step against what's actually
-  // pending — a stale button from a previous week's prompt (Telegram
-  // buttons stay tappable indefinitely) asking about a chip that happens to
-  // still be available must not get applied to the current week.
-  async handleChipReply(
-    gameweekId: number,
-    step: string,
-    answer: 'yes' | 'no',
-  ): Promise<string> {
-    const state = await this.getOrCreate();
-    if (
-      state.pendingPromptGameweekId !== gameweekId ||
-      state.pendingPromptStep !== step
-    ) {
-      throw new Error(
-        `Chip reply for GW${gameweekId}/${step} doesn't match the currently pending prompt.`,
-      );
-    }
-
-    if (answer === 'no') {
-      const column = CHIP_STEP_COLUMN[step as ChipPromptStep];
-      (state as unknown as Record<string, boolean>)[column] = false;
-    }
-    await this.advance(state, step as PromptStep);
-    return 'Noted.';
-  }
-
-  private async advance(
-    state: TeamStateEntity,
-    fromStep: PromptStep,
-  ): Promise<void> {
-    const gameweekId = state.pendingPromptGameweekId;
-    if (gameweekId === null) return;
-
-    const next = nextStep(fromStep, gameweekId, state);
-    state.pendingPromptStep = next;
-    await this.repository.save(state);
-
-    if (next === null) {
-      await this.alertService.sendMessage(
-        `✅ Thanks — generating GW${gameweekId}'s proposal now.`,
-      );
-      await this.tryGenerateProposal(gameweekId, state.freeTransfers);
-      return;
-    }
-    if (next === 'free_transfers') return; // unreachable in practice
-
-    await this.alertService.sendYesNoPrompt(
-      CHIP_STEP_QUESTION[next],
-      `chipavail:${gameweekId}:${next}`,
-    );
-  }
-
-  // Generates and sends this week's proposal the moment the prompt is fully
-  // answered, rather than waiting for DeadlineWatcherService's next hourly
-  // poll — "shortly" should mean shortly, not "up to an hour." Best-effort:
-  // on failure this only logs, it never surfaces a second Telegram error on
-  // top of the completion message already sent — the next automatic poll
-  // retries it, same as any other transient failure there. Checking
-  // findByGameweekId first avoids double-proposing in the (rare, already
-  // tolerated elsewhere) case that an hourly poll fires at the same moment
-  // — ProposalEntity.gameweekId is deliberately not unique for exactly this
-  // kind of overlap.
-  private async tryGenerateProposal(
-    gameweekId: number,
-    freeTransfers: number | null,
-  ): Promise<void> {
-    try {
-      if (freeTransfers === null) return;
-      const alreadyProposed =
-        await this.proposalService.findByGameweekId(gameweekId);
-      if (alreadyProposed) return;
-
-      const [proposal, { players, snapshots }] = await Promise.all([
-        this.proposalService.generateProposal(freeTransfers),
-        this.ingestionService.getBootstrapSnapshot(),
-      ]);
-      await this.alertService.sendProposal(proposal, players, snapshots);
-    } catch (error) {
-      this.logger.error(
-        `Failed to generate GW${gameweekId} proposal after the weekly prompt completed: ${String(error)}`,
-      );
-    }
+    return lines.join('\n');
   }
 }

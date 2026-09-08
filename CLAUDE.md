@@ -39,10 +39,10 @@ file is the short version for whichever session picks this repo up next.
 | `trends` | scaffolded — curated source whitelist, not consumed yet |
 | `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder |
 | `optimization` | implemented — squad optimizer (ILP) + chip evaluator. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
-| `team-state` | implemented (2026-09-08) — weekly Telegram prompt for current free transfers + all 8 chip-availability flags; `DeadlineWatcherService` blocks proposal generation until each week's is answered; `POST /team-state/prompt` manually (re)triggers it for testing — see "Weekly free-transfer/chip prompt" below |
+| `team-state` | implemented (2026-09-08, rebuilt same day) — reads free transfers + chip availability live from FPL's authenticated my-team endpoint (via `ExecutionService`) and sends it as an informational Telegram report before each week's proposal; no persistence, never blocks; `POST /team-state/report` manually re-triggers it for testing — see "Weekly team-status report" below |
 | `proposal` | implemented — optimizer-driven, plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing) and `POST /proposal/chip` (declare a chip for this week's proposal — see "Execution auth" below) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
-| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller; also routes the weekly chip/free-transfer prompt's replies (same single webhook — see "Weekly free-transfer/chip prompt" below); triggers execution on `APPROVED` |
+| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:` callbacks only); triggers execution on `APPROVED` |
 | `execution` | implemented for **lineup/captain/transfers/chips** — `FplAuthClient` (OAuth refresh-token flow, see below) + `ExecutionService`. Transfers/chip contract is unverified against the live API — see below |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday) |
 | persistence | implemented — Postgres + TypeORM, see "Persistence" below |
@@ -179,28 +179,48 @@ solver's effective threshold becomes 8, not 4 — while the real, reported
 free that week). See the regression tests in
 `squad-optimizer.service.spec.ts` for the exact before/after behavior.
 
-## Weekly free-transfer/chip prompt (2026-09-08)
+## Weekly team-status report (2026-09-08, replaced same-day)
 
-Built the companion feature described below (no longer just planned):
-`TeamStateModule` (`TeamStateEntity`, one singleton row keyed by
-`fpl.teamId`) persists current free transfers and all 8 chip-availability
-flags. `DeadlineWatcherService.checkDeadline()` now blocks — does not
-generate/alert a proposal — until `TeamStateService.isFreshFor(gameweekId)`
-is true; if stale, it kicks off (or no-ops if already in flight) the
-Telegram prompt sequence: "how many free transfers?" (plain text reply, 0–5)
-then one Yes/No button per applicable chip. Chip step order per gameweek:
-the first-half set (`wildcard1`/`freeHit1`/`benchBoost1`/`tripleCaptain1`)
-is only asked through the Gameweek 19 deadline (never after, regardless of
-its `*Available` flag — it doesn't carry over); the second-half set only
-from Gameweek 20 on. A chip answered "no" (no longer available) stops being
-asked. Replies land on the *same* existing Telegram webhook
-(`POST /approval/telegram-callback`, deliberately not a new route — see
-`ApprovalController`) since Telegram only supports one webhook URL;
-`chipavail:<gameweekId>:<step>:yes|no` callback data encodes the gameweek
-so a stale button from a prior week's still-open prompt can't get
-misapplied. `AlertModule` stays encapsulated — `TeamStateService` goes
-through `AlertService`'s `sendMessage`/`sendYesNoPrompt` passthroughs
-rather than getting `TelegramAdapter` injected directly.
+Originally built as a Telegram Q&A (see git history / the memory this
+section used to describe): the working assumption was that free-transfer
+count and chip availability weren't obtainable without asking the owner
+directly every week, since the *public* entry API doesn't expose either.
+**That assumption was wrong for the authenticated my-team endpoint.**
+Discovered live 2026-09-08 while capturing a fresh test account's team id:
+`GET /api/my-team/{teamId}/` — the same endpoint `ExecutionService` already
+calls to apply changes — returns `transfers` (`limit`/`made`/`cost`/`bank`/
+`value`) and `chips` (`status_for_entry`/`start_event`/`stop_event` per
+chip) directly. `FplAuthClient`/`ExecutionService` were already fetching
+this on every call; the fields were just typed `unknown` and discarded
+(see `fpl-auth.types.ts`'s `FplChipStatus`/`FplTransfersState`, now typed).
+
+Replaced same-day with a read-only report: `TeamStateService.getTeamState()`
+calls `ExecutionService.getTeamState(teamId)` (a thin passthrough to
+`FplAuthClient.getMyTeam` — keeps the authenticated session isolated to
+`ExecutionModule`, same principle as `getCurrentSquadShape`, per this
+file's hard-constraints section) and derives a plain free-transfer number
+(`transfers.status === 'unlimited'`, seen preseason, is treated the same as
+an active Wildcard/Free Hit — 15, i.e. no plan can exceed it — anything
+else with no numeric `limit` throws rather than guessing). No more DB-backed
+prompt state machine — `TeamStateEntity`/`team_state` table is gone
+(migration `DropTeamState...`), and `ApprovalController` no longer routes
+`chipavail:`/plain-text replies at all, only `approve:`/`reject:`.
+
+`DeadlineWatcherService.checkDeadline()` no longer blocks on anything here —
+right where it used to gate on an answered prompt, it now calls
+`teamStateService.reportTeamState(gameweekId)`, which fetches the live state,
+sends it as an informational Telegram message (free transfers, bank/value,
+one line per chip with an emoji per `status_for_entry`), and returns it —
+that `freeTransfers` feeds straight into `generateProposal`. `POST
+/team-state/report` manually triggers the same report for testing (same
+idea as `POST /proposal/captain-swap`), replacing the old `/team-state/prompt`.
+
+Still unverified beyond what's been observed live so far (one preseason
+capture, `status: 'unlimited'`): the exact `status` values in a normal
+in-season week (expected something like `'limited'`/`'cost'` with a real
+numeric `limit`), and whether `chips[]` ever lists a second-half instance
+(`number: 2`) before it unlocks, or only appends it once it does. Worth a
+sanity check against the report the first time this runs past Gameweek 1.
 
 For testing without waiting on the automatic trigger window, `POST
 /team-state/prompt` (`TeamStateController`) fires the prompt for the
@@ -272,15 +292,17 @@ is *not* automatically moot under notification-only — that was conflating
 two separate things. "Execution" (writing transfers/chips to FPL) is what's
 in question; "knowing what transfers/chips are available so the proposal
 accounts for them" is a proposal-quality problem that exists either way,
-since the public API doesn't expose free-transfer count or unplayed chips
-regardless of which way this decision goes. See the weekly prompt feature
-below — it's decoupled from this open question and not blocked by it.
+since the *public* entry API doesn't expose free-transfer count or unplayed
+chips — the authenticated my-team endpoint does, see the correction below —
+regardless of which way this decision goes. See "Weekly team-status report"
+above — it's decoupled from this open question and not blocked by it.
 
-Companion feature, independent of the decision above — **built 2026-09-08**,
-see "Weekly free-transfer/chip prompt" above for the implementation. It asks
-for current free transfers and available chips before each week's proposal
-(the public API exposes neither), and now actually **blocks** proposal
-generation until answered, rather than just informing it.
+Companion feature, independent of the decision above — **built 2026-09-08,
+rebuilt same day**: reports current free transfers and available chips
+before each week's proposal, read live from FPL rather than asked for (see
+"Weekly team-status report" above for why the original Q&A version turned
+out to be solving a problem that didn't exist). Doesn't block proposal
+generation — there was never anything to wait on once it stopped asking.
 
 Companion feature, unblocked now that persistence has landed (see below):
 
