@@ -87,6 +87,20 @@ describe('ApprovalController', () => {
     );
   });
 
+  it('approves without the chip via the approvenochip:<id> callback', async () => {
+    const result = await controller.handleTelegramCallback(
+      update('approvenochip:prop-1'),
+    );
+
+    expect(approvalService.decide).toHaveBeenCalledWith(
+      'prop-1',
+      ProposalStatus.APPROVED,
+      '999',
+      { withoutChip: true },
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
   it('ignores a callback from an unrecognized chat', async () => {
     const result = await controller.handleTelegramCallback(
       update('approve:prop-1', 99999),

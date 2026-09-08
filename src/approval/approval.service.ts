@@ -28,8 +28,9 @@ export class ApprovalService {
     proposalId: string,
     decision: Decision,
     decidedBy: string,
+    options?: { withoutChip?: boolean },
   ): Promise<Approval> {
-    const proposal = await this.proposalService.findById(proposalId);
+    let proposal = await this.proposalService.findById(proposalId);
     if (!proposal) {
       throw new Error(`No proposal found with id ${proposalId}.`);
     }
@@ -41,6 +42,14 @@ export class ApprovalService {
       throw new Error(
         'Deadline has already passed; proposal expired instead of being decided.',
       );
+    }
+
+    // Swap in the chip-free plan *before* the state transition below, so
+    // updateStatus's own re-read of the proposal (from the repository)
+    // picks up the swap rather than clobbering it with the original
+    // with-chip fields.
+    if (options?.withoutChip) {
+      proposal = await this.proposalService.applyNoChipAlternative(proposalId);
     }
 
     this.stateMachine.assertTransition(proposal.status, decision);

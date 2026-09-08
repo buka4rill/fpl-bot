@@ -46,7 +46,7 @@ file is the short version for whichever session picks this repo up next.
 | `team-state` | implemented (2026-09-08, rebuilt same day) — reads free transfers + chip availability live from FPL's authenticated my-team endpoint (via `ExecutionService`) and sends it as an informational Telegram report before each week's proposal; no persistence, never blocks; `POST /team-state/report` manually re-triggers it for testing — see "Weekly team-status report" below |
 | `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), `POST /proposal/chip` (declare a chip for this week's proposal, goes through the real optimizer), and `POST /proposal/chip-manual` (declare a chip on the current live squad unchanged, bypassing the optimizer — used to verify Bench Boost live, see "Execution auth" below) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
-| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:`, plus `appliedyes:`/`appliedno:` — see "Post-deadline applied-manually check-in" below); triggers execution on `APPROVED`. Also the single Telegram webhook entry point for plain-message slash commands — see `telegram-commands` below |
+| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:`/`approvenochip:` — see "Three-way approval when a chip is recommended" below — plus `appliedyes:`/`appliedno:`, see "Post-deadline applied-manually check-in" below); triggers execution on `APPROVED`. Also the single Telegram webhook entry point for plain-message slash commands — see `telegram-commands` below |
 | `telegram-commands` | implemented (2026-09-08) — `/status`, `/propose`, `/login`, `/help` reachable from the Telegram chat itself, routed through `ApprovalController`'s webhook (the only Telegram entry point) to `TelegramCommandsService`; see "Telegram slash commands" below |
 | `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers, Bench Boost, and Triple Captain all verified live 2026-09-08; Wildcard/Free Hit still unverified — see below |
 | `auth` | implemented (2026-09-08) — holds `FplAuthClient`/the authenticated session (moved out of `ExecutionModule`, see "Execution auth" below); `AuthService.isAuthenticated()`/`assertAuthenticated()` let other modules check/gate on login state; `POST /auth/token` (shared-secret guarded) applies a freshly-captured refresh token to the running instance — the landing spot for `pnpm run auth:login`'s Playwright-assisted capture (`scripts/auth-login.ts`) |
@@ -516,6 +516,45 @@ against the worst symptom. See the regression tests in
 `chip-evaluator.service.spec.ts` (`'does not recommend a chip for a
 marginal bonus that only ties the risk premium'` and the companion test
 confirming a bonus that clearly exceeds it still wins).
+
+**Three-way approval when a chip is recommended (2026-09-08).** Every
+proposal alert used to show only Approve/Reject, even when the winning
+plan included a chip — approving meant accepting the whole plan, chip
+included, with no way to say "I like the transfer plan, just not the
+chip" without rejecting everything and redoing it manually. Now, whenever
+`generateBestProposal()`'s winner has a chip, the Telegram alert shows
+three buttons instead: **Approve (with chip)**, **Approve (without
+chip)**, **Reject**; when no chip is recommended, the flow is unchanged.
+Deliberately scoped to the *automatic* recommendation only — the manual
+`/proposal/chip` override still gets plain Approve/Reject, since the user
+already explicitly chose that chip themselves there.
+
+The mechanism leans on something `ChipEvaluatorService
+.evaluateBestStrategy()` already computes and used to just discard: the
+chip-free candidate it compared against the winner. `ProposalService
+.generateBestProposal()` now persists that alternative as
+`Proposal.noChipAlternative` (new nullable `jsonb` column, migration
+`AddNoChipAlternativeToProposals`) whenever the winner has a chip — so
+it's still there, execution-ready, whenever the Telegram reply actually
+arrives (potentially hours later). `ApprovalController` recognizes a new
+`approvenochip:<id>` callback action; `ApprovalService.decide()` gained an
+optional `{ withoutChip: true }` 4th argument that — before the PENDING →
+APPROVED transition — calls `ProposalService.applyNoChipAlternative()` to
+swap the alternative's transfers/lineup/captain/etc. into the stored
+proposal row and clear `chip`. Because that swap is persisted *before*
+`updateStatus`'s own fresh re-read, every downstream consumer
+(`ExecutionService.apply`, `sendExecutionResult`, `ResultsService`'s
+later predicted-vs-actual report) sees the correct, already-decided plan
+automatically — no "chip was declined" flag had to be threaded through
+any of them.
+
+One implementation gotcha worth flagging for next time: `decide()`'s new
+4th parameter is only actually passed by `ApprovalController` when
+`withoutChip` is true — passing an explicit `{withoutChip: undefined}` (or
+any 4th argument at all) for plain approve/reject would have broken the
+existing tests asserting `decide` was called with exactly 3 arguments,
+since Jest's `toHaveBeenCalledWith` treats a trailing explicit `undefined`
+as a real 4th argument, not the same as omitting it.
 
 **Still not started — the genuinely hard part**: timing/hold value
 (comparing this week's Wildcard against holding for a better week) and

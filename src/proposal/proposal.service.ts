@@ -68,6 +68,25 @@ export class ProposalService {
         freeTransfers,
         availableChips,
       );
+    // ChipEvaluatorService always evaluates a chip-free candidate too —
+    // persisted here (only when the winner actually has a chip) so
+    // "Approve (without chip)" has a real, already-computed plan to fall
+    // back to, potentially hours after this proposal was generated.
+    const noChip = candidates.find((c) => c.chip === undefined);
+    const noChipAlternative =
+      best.chip !== undefined && noChip
+        ? {
+            transfers: noChip.optimization.transfers,
+            lineup: noChip.optimization.startingXI,
+            benchGoalkeeperId: noChip.optimization.benchGoalkeeperId,
+            benchOutfieldIds: noChip.optimization.benchOutfieldIds,
+            captainId: noChip.optimization.captainId,
+            viceCaptainId: noChip.optimization.viceCaptainId,
+            expectedGain: noChip.netExpectedPoints,
+            hitCost: noChip.optimization.hitCost,
+          }
+        : undefined;
+
     const proposal = await this.store({
       gameweekId: best.optimization.targetGameweek.id,
       season: best.optimization.targetGameweek.season,
@@ -81,8 +100,40 @@ export class ProposalService {
       chip: best.chip,
       expectedGain: best.netExpectedPoints,
       hitCost: best.optimization.hitCost,
+      noChipAlternative,
     });
     return { proposal, candidates };
+  }
+
+  // Swaps in the already-computed chip-free alternative (see
+  // generateBestProposal) and clears `chip` — called by ApprovalService
+  // before the PENDING -> APPROVED transition when the reply was
+  // "Approve (without chip)", so the transition's own re-read of the
+  // proposal picks up the swap rather than the original with-chip plan.
+  async applyNoChipAlternative(id: string): Promise<Proposal> {
+    const proposal = await this.proposalRepository.findOneBy({ id });
+    if (!proposal) {
+      throw new Error(`No proposal found with id ${id}.`);
+    }
+    if (!proposal.noChipAlternative) {
+      throw new Error(
+        `Proposal ${id} has no chip-free alternative to approve.`,
+      );
+    }
+    const alt = proposal.noChipAlternative;
+    const updated: ProposalEntity = {
+      ...proposal,
+      transfers: alt.transfers,
+      lineup: alt.lineup,
+      benchGoalkeeperId: alt.benchGoalkeeperId,
+      benchOutfieldIds: alt.benchOutfieldIds,
+      captainId: alt.captainId,
+      viceCaptainId: alt.viceCaptainId,
+      expectedGain: alt.expectedGain,
+      hitCost: alt.hitCost,
+      chip: undefined,
+    };
+    return this.proposalRepository.save(updated);
   }
 
   // Shared by any proposal source (the optimizer, or a manual override like a

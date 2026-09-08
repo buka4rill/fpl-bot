@@ -120,6 +120,43 @@ describe('AlertService', () => {
     expect(text).not.toContain('💸 Hit');
   });
 
+  it('tells the adapter there is no chip-free alternative by default', async () => {
+    await service.sendProposal(proposal, players, snapshots);
+
+    expect(telegram.sendProposalAlert).toHaveBeenCalledWith(
+      expect.any(String),
+      'prop-1',
+      false,
+    );
+  });
+
+  it('tells the adapter a chip-free alternative exists', async () => {
+    await service.sendProposal(
+      {
+        ...proposal,
+        chip: FplChip.WILDCARD,
+        noChipAlternative: {
+          transfers: [],
+          lineup: [1, 2],
+          benchGoalkeeperId: 5,
+          benchOutfieldIds: [],
+          captainId: 2,
+          viceCaptainId: 1,
+          expectedGain: 40,
+          hitCost: 0,
+        },
+      },
+      players,
+      snapshots,
+    );
+
+    expect(telegram.sendProposalAlert).toHaveBeenCalledWith(
+      expect.any(String),
+      'prop-1',
+      true,
+    );
+  });
+
   it('orders the Starting XI GKP -> DEF -> MID -> FWD regardless of input order', async () => {
     await service.sendProposal(
       // Deliberately scrambled: FWD, MID, GKP, DEF.

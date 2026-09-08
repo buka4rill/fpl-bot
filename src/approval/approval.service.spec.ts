@@ -7,6 +7,7 @@ import { ExecutionService } from '../execution/execution.service';
 import { AlertService } from '../alert/alert.service';
 import { Approval, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
+import { FplChip } from '../common/enums/chip.enum';
 import { ApprovalEntity } from '../persistence/entities/approval.entity';
 
 describe('ApprovalService', () => {
@@ -16,6 +17,7 @@ describe('ApprovalService', () => {
     findAllPending: jest.Mock;
     updateStatus: jest.Mock;
     recordAppliedManually: jest.Mock;
+    applyNoChipAlternative: jest.Mock;
   };
   let executionService: { apply: jest.Mock };
   let alertService: {
@@ -56,6 +58,7 @@ describe('ApprovalService', () => {
         .mockImplementation((id: string, applied: boolean) =>
           Promise.resolve(baseProposal({ id, appliedManually: applied })),
         ),
+      applyNoChipAlternative: jest.fn(),
     };
     executionService = {
       apply: jest.fn().mockResolvedValue({ success: true }),
@@ -199,6 +202,60 @@ describe('ApprovalService', () => {
       await expect(
         service.decide('p1', ProposalStatus.REJECTED, 'user1'),
       ).rejects.toThrow('Cannot transition');
+    });
+
+    describe('{ withoutChip: true }', () => {
+      it('swaps in the chip-free alternative before executing', async () => {
+        proposalService.findById.mockResolvedValue(
+          baseProposal({ chip: FplChip.WILDCARD }),
+        );
+        const swapped = baseProposal({ chip: undefined, captainId: 99 });
+        proposalService.applyNoChipAlternative.mockResolvedValue(swapped);
+        // Simulates the real implementation: applyNoChipAlternative
+        // persists the swap, so updateStatus's own fresh DB read (mocked
+        // generically elsewhere in this file) picks it up here too.
+        proposalService.updateStatus.mockResolvedValueOnce({
+          ...swapped,
+          status: ProposalStatus.APPROVED,
+        });
+
+        await service.decide('p1', ProposalStatus.APPROVED, 'user1', {
+          withoutChip: true,
+        });
+
+        expect(proposalService.applyNoChipAlternative).toHaveBeenCalledWith(
+          'p1',
+        );
+        // Execution operates on the swapped proposal, not the original
+        // with-chip one.
+        expect(executionService.apply).toHaveBeenCalledWith(
+          expect.objectContaining({ captainId: 99, chip: undefined }),
+        );
+      });
+
+      it('propagates the error when the proposal has no alternative to fall back to', async () => {
+        proposalService.findById.mockResolvedValue(
+          baseProposal({ chip: FplChip.WILDCARD }),
+        );
+        proposalService.applyNoChipAlternative.mockRejectedValue(
+          new Error('has no chip-free alternative to approve'),
+        );
+
+        await expect(
+          service.decide('p1', ProposalStatus.APPROVED, 'user1', {
+            withoutChip: true,
+          }),
+        ).rejects.toThrow('has no chip-free alternative');
+        expect(executionService.apply).not.toHaveBeenCalled();
+      });
+
+      it('does not touch the alternative on a plain decide (no options)', async () => {
+        proposalService.findById.mockResolvedValue(baseProposal());
+
+        await service.decide('p1', ProposalStatus.APPROVED, 'user1');
+
+        expect(proposalService.applyNoChipAlternative).not.toHaveBeenCalled();
+      });
     });
   });
 

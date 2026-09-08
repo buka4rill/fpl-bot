@@ -35,7 +35,11 @@ export class AlertService {
     candidates?: ChipCandidate[],
   ): Promise<void> {
     const text = this.renderMessage(proposal, players, snapshots, candidates);
-    await this.telegram.sendProposalAlert(text, proposal.id);
+    await this.telegram.sendProposalAlert(
+      text,
+      proposal.id,
+      proposal.noChipAlternative != null,
+    );
   }
 
   // Loud on failure, not silent — ARCHITECTURE.md §10 risk table: execution

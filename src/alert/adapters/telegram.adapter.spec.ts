@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { Markup } from 'telegraf';
 import { TelegramAdapter } from './telegram.adapter';
 
 const sendMessageMock = jest.fn();
@@ -75,6 +76,43 @@ describe('TelegramAdapter', () => {
       adapter.sendProposalAlert('hello', 'prop-1'),
     ).resolves.toBeUndefined();
     expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('renders a three-button keyboard when a chip-free alternative exists', async () => {
+    const adapter = await buildAdapter('test-token');
+    const buttonCallbackMock = Markup.button.callback as jest.Mock;
+    buttonCallbackMock.mockClear();
+
+    await adapter.sendProposalAlert('hello', 'prop-1', true);
+
+    expect(buttonCallbackMock).toHaveBeenCalledWith(
+      '✅ Approve (with chip)',
+      'approve:prop-1',
+    );
+    expect(buttonCallbackMock).toHaveBeenCalledWith(
+      'Approve (without chip)',
+      'approvenochip:prop-1',
+    );
+    expect(buttonCallbackMock).toHaveBeenCalledWith(
+      '❌ Reject',
+      'reject:prop-1',
+    );
+    expect(buttonCallbackMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('renders the plain two-button keyboard when there is no chip-free alternative', async () => {
+    const adapter = await buildAdapter('test-token');
+    const buttonCallbackMock = Markup.button.callback as jest.Mock;
+    buttonCallbackMock.mockClear();
+
+    await adapter.sendProposalAlert('hello', 'prop-1');
+
+    expect(buttonCallbackMock).toHaveBeenCalledWith(
+      'Approve',
+      'approve:prop-1',
+    );
+    expect(buttonCallbackMock).toHaveBeenCalledWith('Reject', 'reject:prop-1');
+    expect(buttonCallbackMock).toHaveBeenCalledTimes(2);
   });
 
   it('sends a message with a yes/no inline keyboard for the applied-manually check-in', async () => {

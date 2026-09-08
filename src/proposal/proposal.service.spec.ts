@@ -257,6 +257,95 @@ describe('ProposalService', () => {
         [FplChip.BENCH_BOOST],
       );
     });
+
+    it('persists the chip-free candidate as noChipAlternative when the winner has a chip', async () => {
+      const noChipOptimization: SquadOptimizationResult = {
+        ...optimization,
+        transfers: [{ playerOutId: 6, playerInId: 16 }],
+        startingXI: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16],
+        captainId: 2,
+        hitCost: 4,
+      };
+      chipEvaluatorService.evaluateBestStrategy.mockResolvedValue({
+        best: { chip: FplChip.WILDCARD, optimization, netExpectedPoints: 60 },
+        candidates: [
+          {
+            chip: undefined,
+            optimization: noChipOptimization,
+            netExpectedPoints: 45,
+          },
+          { chip: FplChip.WILDCARD, optimization, netExpectedPoints: 60 },
+        ],
+      });
+
+      const { proposal } = await service.generateBestProposal();
+
+      expect(proposal.noChipAlternative).toEqual({
+        transfers: [{ playerOutId: 6, playerInId: 16 }],
+        lineup: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16],
+        benchGoalkeeperId: 12,
+        benchOutfieldIds: [13, 14, 15],
+        captainId: 2,
+        viceCaptainId: 2,
+        expectedGain: 45,
+        hitCost: 4,
+      });
+    });
+
+    it('leaves noChipAlternative unset when the winner has no chip', async () => {
+      chipEvaluatorService.evaluateBestStrategy.mockResolvedValue({
+        best: candidates[0], // chip: undefined
+        candidates,
+      });
+
+      const { proposal } = await service.generateBestProposal();
+
+      expect(proposal.noChipAlternative).toBeFalsy();
+    });
+  });
+
+  describe('applyNoChipAlternative', () => {
+    it('swaps in the alternative and clears the chip', async () => {
+      chipEvaluatorService.evaluateBestStrategy.mockResolvedValue({
+        best: { chip: FplChip.WILDCARD, optimization, netExpectedPoints: 60 },
+        candidates: [
+          {
+            chip: undefined,
+            optimization: {
+              ...optimization,
+              transfers: [{ playerOutId: 6, playerInId: 16 }],
+              captainId: 2,
+              hitCost: 4,
+            },
+            netExpectedPoints: 45,
+          },
+          { chip: FplChip.WILDCARD, optimization, netExpectedPoints: 60 },
+        ],
+      });
+      const { proposal } = await service.generateBestProposal();
+
+      const updated = await service.applyNoChipAlternative(proposal.id);
+
+      expect(updated.chip).toBeUndefined();
+      expect(updated.transfers).toEqual([{ playerOutId: 6, playerInId: 16 }]);
+      expect(updated.captainId).toBe(2);
+      expect(updated.hitCost).toBe(4);
+      expect(updated.expectedGain).toBe(45);
+    });
+
+    it('throws when the proposal has no chip-free alternative', async () => {
+      const proposal = await service.generateProposal(); // no chip, no alternative
+
+      await expect(service.applyNoChipAlternative(proposal.id)).rejects.toThrow(
+        'has no chip-free alternative',
+      );
+    });
+
+    it('throws for an unknown proposal', async () => {
+      await expect(
+        service.applyNoChipAlternative('nonexistent'),
+      ).rejects.toThrow('No proposal found');
+    });
   });
 
   it('records the applied-manually answer and persists it', async () => {

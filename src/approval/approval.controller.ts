@@ -28,20 +28,25 @@ interface TelegramUpdate {
   };
 }
 
-const ACTION_TO_DECISION: Record<
+// approvenochip: is a separate action from approve: (not just a flag on
+// it) — offered only when the proposal's own chip recommendation has a
+// persisted chip-free alternative (AlertService/TelegramAdapter decide
+// whether to even show the button; this map just has to recognize it).
+const ACTION_CONFIG: Record<
   string,
-  ProposalStatus.APPROVED | ProposalStatus.REJECTED
+  {
+    decision: ProposalStatus.APPROVED | ProposalStatus.REJECTED;
+    withoutChip?: boolean;
+    toast: string;
+  }
 > = {
-  approve: ProposalStatus.APPROVED,
-  reject: ProposalStatus.REJECTED,
-};
-
-const DECISION_TOAST: Record<
-  ProposalStatus.APPROVED | ProposalStatus.REJECTED,
-  string
-> = {
-  [ProposalStatus.APPROVED]: 'Approved.',
-  [ProposalStatus.REJECTED]: 'Rejected.',
+  approve: { decision: ProposalStatus.APPROVED, toast: 'Approved.' },
+  approvenochip: {
+    decision: ProposalStatus.APPROVED,
+    withoutChip: true,
+    toast: 'Approved (without chip).',
+  },
+  reject: { decision: ProposalStatus.REJECTED, toast: 'Rejected.' },
 };
 
 // Post-deadline "did you apply it yourself?" check-in — a separate action
@@ -126,14 +131,27 @@ export class ApprovalController {
       return 'Thanks — noted.';
     }
 
-    const decision = ACTION_TO_DECISION[action];
-    if (!decision) {
+    const config = ACTION_CONFIG[action];
+    if (!config) {
       throw new Error(`unrecognized callback data: ${query.data}`);
     }
 
     const decidedBy = query.from ? String(query.from.id) : String(chatId);
-    await this.approvalService.decide(proposalId, decision, decidedBy);
-    return DECISION_TOAST[decision];
+    // Only pass the 4th argument when actually needed — an explicit
+    // `undefined` there is not the same call shape as omitting it.
+    if (config.withoutChip) {
+      await this.approvalService.decide(
+        proposalId,
+        config.decision,
+        decidedBy,
+        {
+          withoutChip: true,
+        },
+      );
+    } else {
+      await this.approvalService.decide(proposalId, config.decision, decidedBy);
+    }
+    return config.toast;
   }
 
   // Slash commands (/status, /propose, /login, /help) — see

@@ -108,6 +108,22 @@ export interface TransferPlan {
   playerInId: number;
 }
 
+// The chip-free plan ChipEvaluatorService already computed and discarded
+// while picking the winning candidate — persisted here so "Approve
+// (without chip)" has something real to execute, potentially hours after
+// the proposal was generated. Only ever set when the winning proposal
+// itself has a chip.
+export interface NoChipAlternative {
+  transfers: TransferPlan[];
+  lineup: number[];
+  benchGoalkeeperId: number;
+  benchOutfieldIds: number[];
+  captainId: number;
+  viceCaptainId: number;
+  expectedGain: number;
+  hitCost: number;
+}
+
 export interface Proposal {
   id: string;
   gameweekId: number; // resets to 1 each season — only unique combined with `season`
@@ -134,6 +150,10 @@ export interface Proposal {
   // this proposal — a one-time-send guard, same idea as the dedupe on
   // proposal generation itself. Null/undefined until then.
   resultReportedAt?: string | null;
+  // See NoChipAlternative — only set when this proposal's own `chip` is
+  // set, so the Telegram alert can offer "Approve (without chip)" as a
+  // real, execution-ready third option.
+  noChipAlternative?: NoChipAlternative | null;
 }
 
 // Actual per-player performance for a single finished gameweek, from the

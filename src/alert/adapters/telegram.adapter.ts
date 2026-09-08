@@ -49,16 +49,41 @@ export class TelegramAdapter implements OnModuleInit {
 
   // Approve/Reject buttons carry the proposal ID as callback_data; Telegram
   // delivers them straight to ApprovalController's webhook on tap.
-  async sendProposalAlert(text: string, proposalId: string): Promise<void> {
+  // `hasNoChipAlternative` (true only when the proposal has a persisted
+  // chip-free fallback — see ProposalService.generateBestProposal) swaps
+  // in a third button, "Approve (without chip)", so a chip recommendation
+  // can be accepted without the transfer/lineup plan while still burning
+  // the chip.
+  async sendProposalAlert(
+    text: string,
+    proposalId: string,
+    hasNoChipAlternative = false,
+  ): Promise<void> {
     if (!this.bot) {
       this.logger.warn('TELEGRAM_BOT_TOKEN not configured — skipping send.');
       return;
     }
 
-    const keyboard = Markup.inlineKeyboard([
-      Markup.button.callback('Approve', `approve:${proposalId}`),
-      Markup.button.callback('Reject', `reject:${proposalId}`),
-    ]);
+    const keyboard = hasNoChipAlternative
+      ? Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              '✅ Approve (with chip)',
+              `approve:${proposalId}`,
+            ),
+          ],
+          [
+            Markup.button.callback(
+              'Approve (without chip)',
+              `approvenochip:${proposalId}`,
+            ),
+            Markup.button.callback('❌ Reject', `reject:${proposalId}`),
+          ],
+        ])
+      : Markup.inlineKeyboard([
+          Markup.button.callback('Approve', `approve:${proposalId}`),
+          Markup.button.callback('Reject', `reject:${proposalId}`),
+        ]);
 
     await this.bot.telegram.sendMessage(this.chatId, text, {
       parse_mode: 'Markdown',

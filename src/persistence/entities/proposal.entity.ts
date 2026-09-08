@@ -1,5 +1,9 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { Proposal, TransferPlan } from '../../common/types/domain.types';
+import {
+  NoChipAlternative,
+  Proposal,
+  TransferPlan,
+} from '../../common/types/domain.types';
 import { ProposalStatus } from '../../common/enums/proposal-status.enum';
 import { FplChip } from '../../common/enums/chip.enum';
 
@@ -62,4 +66,7 @@ export class ProposalEntity implements Proposal {
 
   @Column({ type: 'timestamptz', nullable: true })
   resultReportedAt?: string | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  noChipAlternative?: NoChipAlternative | null;
 }
