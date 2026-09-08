@@ -4,6 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { PredictionService } from './prediction.service';
 import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
+import { ExecutionService } from '../execution/execution.service';
 import {
   CurrentSquad,
   Fixture,
@@ -21,8 +22,8 @@ describe('PredictionService', () => {
   let ingestionService: {
     getBootstrapSnapshot: jest.Mock;
     getFixtures: jest.Mock;
-    getCurrentSquad: jest.Mock;
   };
+  let executionService: { getCurrentSquad: jest.Mock };
   let strategy: { predict: jest.Mock };
   let config: { get: jest.Mock };
   let gameweekRepository: { create: jest.Mock; save: jest.Mock };
@@ -122,6 +123,8 @@ describe('PredictionService', () => {
         .fn()
         .mockResolvedValue({ players, snapshots, rules, gameweeks }),
       getFixtures: jest.fn().mockResolvedValue(fixtures),
+    };
+    executionService = {
       getCurrentSquad: jest.fn(),
     };
     strategy = {
@@ -144,6 +147,7 @@ describe('PredictionService', () => {
         PredictionService,
         { provide: HeuristicStrategy, useValue: strategy },
         { provide: IngestionService, useValue: ingestionService },
+        { provide: ExecutionService, useValue: executionService },
         { provide: ConfigService, useValue: config },
         {
           provide: getRepositoryToken(GameweekEntity),
@@ -184,24 +188,28 @@ describe('PredictionService', () => {
   it('leaves currentSquad undefined when no FPL_TEAM_ID is configured', async () => {
     const result = await service.predictGameweek();
 
-    expect(ingestionService.getCurrentSquad).not.toHaveBeenCalled();
+    expect(executionService.getCurrentSquad).not.toHaveBeenCalled();
     expect(result.currentSquad).toBeUndefined();
   });
 
-  it('fetches the current squad when FPL_TEAM_ID is configured', async () => {
+  it('fetches the current squad (via the authenticated endpoint) when FPL_TEAM_ID is configured', async () => {
     config.get.mockReturnValue('42');
     const currentSquad: CurrentSquad = {
       teamId: 42,
-      gameweekId: 3,
+      gameweekId: 4,
       playerIds: [1, 2, 3],
       bank: 0,
       teamValue: 100,
     };
-    ingestionService.getCurrentSquad.mockResolvedValue(currentSquad);
+    executionService.getCurrentSquad.mockResolvedValue(currentSquad);
 
     const result = await service.predictGameweek();
 
-    expect(ingestionService.getCurrentSquad).toHaveBeenCalledWith(42);
+    // Called with the *target* (next) gameweek's id, 4 — not the current
+    // gameweek, 3 — the whole point being tested here: the account's
+    // public picks history for gameweek 3 might not exist at all, which
+    // is exactly the 404 this authenticated path avoids.
+    expect(executionService.getCurrentSquad).toHaveBeenCalledWith(42, 4);
     expect(result.currentSquad).toBe(currentSquad);
   });
 

@@ -419,6 +419,29 @@ re-break prod) — prod is what actually matters day to day. Revisit giving
 dev its own separate disposable FPL account (mirroring the Telegram bot
 split) if this ping-pong becomes a real problem.
 
+**`/propose` immediately surfaced a second, real bug — fixed same day, not
+specific to the command itself.** `PredictionService.predictGameweek()`
+read the current squad via `IngestionService.getCurrentSquad()`, the
+*public* entry/picks endpoint — the exact same 404 already documented
+under "Execution auth" for `manual-transfer`/`captain-swap`/`chip-manual`
+(this account's `entry.current_event` points at a gameweek it has no
+saved public picks history for). Since `/propose` mirrors the real
+optimizer-driven `POST /proposal/generate` flow, this meant the bug wasn't
+command-specific — it silently threatened the **automatic weekly
+proposal flow** too, for any account in this state. Fixed by adding
+`ExecutionService.getCurrentSquad(teamId, gameweekId)` (authenticated
+my-team endpoint, same source `manual-transfer`/`captain-swap`/
+`chip-manual` already use successfully) and switching
+`PredictionService` to it — `PredictionModule` now depends on
+`ExecutionModule`, a real dependency addition, not just a call-site swap.
+Deliberately not a new practical auth requirement: every real caller of
+`predictGameweek()`/`generateProposal()` (`DeadlineWatcherService`,
+`ProposalController`, `TelegramCommandsService`) already asserts
+authentication before reaching this code. `IngestionService.getCurrentSquad()`
+itself is untouched and still has a real, distinct use — reading *any*
+team's public squad without needing to be authenticated as them, which
+the authenticated path can't do.
+
 ## Weekly team-status report (2026-09-08, replaced same-day)
 
 Originally built as a Telegram Q&A (see git history / the memory this

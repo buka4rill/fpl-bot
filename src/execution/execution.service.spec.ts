@@ -243,4 +243,67 @@ describe('ExecutionService', () => {
       'Execution failed',
     );
   });
+
+  describe('getCurrentSquad', () => {
+    it('derives playerIds, bank, and teamValue from the authenticated my-team response', async () => {
+      fplAuthClient.getMyTeam.mockResolvedValue({
+        picks: currentPicks,
+        chips: [],
+        transfers: { bank: 3, value: 997 },
+      });
+
+      const squad = await service.getCurrentSquad(6909032, 4);
+
+      expect(squad).toEqual({
+        teamId: 6909032,
+        gameweekId: 4,
+        playerIds: currentPicks.map((p) => p.element),
+        bank: 0.3,
+        teamValue: 99.7,
+        activeChip: undefined,
+      });
+    });
+
+    it('passes through the caller-supplied gameweekId, not one derived from the response', async () => {
+      fplAuthClient.getMyTeam.mockResolvedValue({
+        picks: currentPicks,
+        chips: [],
+        transfers: { bank: 0, value: 1000 },
+      });
+
+      const squad = await service.getCurrentSquad(6909032, 12);
+
+      expect(squad.gameweekId).toBe(12);
+    });
+
+    it('derives activeChip from the chip whose status_for_entry is "active"', async () => {
+      fplAuthClient.getMyTeam.mockResolvedValue({
+        picks: currentPicks,
+        chips: [
+          { name: 'bboost', status_for_entry: 'unavailable' },
+          { name: '3xc', status_for_entry: 'active' },
+        ],
+        transfers: { bank: 0, value: 1000 },
+      });
+
+      const squad = await service.getCurrentSquad(6909032, 4);
+
+      expect(squad.activeChip).toBe(FplChip.TRIPLE_CAPTAIN);
+    });
+
+    it('leaves activeChip undefined when no chip is active', async () => {
+      fplAuthClient.getMyTeam.mockResolvedValue({
+        picks: currentPicks,
+        chips: [
+          { name: 'bboost', status_for_entry: 'available' },
+          { name: '3xc', status_for_entry: 'unavailable' },
+        ],
+        transfers: { bank: 0, value: 1000 },
+      });
+
+      const squad = await service.getCurrentSquad(6909032, 4);
+
+      expect(squad.activeChip).toBeUndefined();
+    });
+  });
 });

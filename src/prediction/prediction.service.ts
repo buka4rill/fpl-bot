@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
+import { ExecutionService } from '../execution/execution.service';
 import {
   CurrentSquad,
   Fixture,
@@ -32,6 +33,7 @@ export class PredictionService {
   constructor(
     private readonly strategy: HeuristicStrategy,
     private readonly ingestionService: IngestionService,
+    private readonly executionService: ExecutionService,
     private readonly config: ConfigService,
     @InjectRepository(GameweekEntity)
     private readonly gameweekRepository: Repository<GameweekEntity>,
@@ -55,9 +57,22 @@ export class PredictionService {
       );
     }
 
+    // Reads through the authenticated my-team endpoint (ExecutionService),
+    // not IngestionService's public entry/picks path — that one 404s for
+    // an account with no completed-gameweek picks history (discovered
+    // 2026-09-08 testing against the disposable test account), which
+    // would otherwise silently break the optimizer-driven proposal flow,
+    // including the automatic weekly one. Every real caller of
+    // predictGameweek() already asserts authentication before reaching
+    // this point (DeadlineWatcherService, ProposalController,
+    // TelegramCommandsService), so this doesn't add a new practical
+    // requirement — see CLAUDE.md's "Execution auth".
     const teamId = this.config.get<string>('fpl.teamId');
     const currentSquad = teamId
-      ? await this.ingestionService.getCurrentSquad(Number(teamId))
+      ? await this.executionService.getCurrentSquad(
+          Number(teamId),
+          targetGameweek.id,
+        )
       : undefined;
 
     const enriched = this.withNextFixtureDifficulty(

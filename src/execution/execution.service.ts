@@ -9,7 +9,11 @@ import {
   FplTransferSubmission,
   FplTransfersState,
 } from '../auth/clients/fpl-auth.types';
-import { Proposal, ExecutionLog } from '../common/types/domain.types';
+import {
+  CurrentSquad,
+  Proposal,
+  ExecutionLog,
+} from '../common/types/domain.types';
 import { ExecutionLogEntity } from '../persistence/entities/execution-log.entity';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { FplChip } from '../common/enums/chip.enum';
@@ -161,6 +165,42 @@ export class ExecutionService {
   async getTeamState(teamId: number): Promise<TeamStateShape> {
     const current = await this.fplAuthClient.getMyTeam(teamId);
     return { chips: current.chips, transfers: current.transfers };
+  }
+
+  // Same CurrentSquad shape IngestionService.getCurrentSquad() produces
+  // from the *public* entry/picks endpoint, but sourced from the
+  // authenticated my-team endpoint instead — added 2026-09-08 because the
+  // public path 404s for an account with no completed-gameweek picks
+  // history (discovered testing against the disposable test account;
+  // PredictionService now calls this instead so the optimizer-driven
+  // proposal flow — including the automatic weekly one — doesn't silently
+  // depend on that account quirk). `gameweekId` isn't available from
+  // my-team the way the public endpoint's `entry_history.event` gives it
+  // directly, so the caller supplies the gameweek it's actually predicting
+  // for — not load-bearing for SquadOptimizerService either way (it only
+  // reads `playerIds`/`bank`/`teamValue`).
+  async getCurrentSquad(
+    teamId: number,
+    gameweekId: number,
+  ): Promise<CurrentSquad> {
+    const current = await this.fplAuthClient.getMyTeam(teamId);
+    const activeChipStatus = current.chips.find(
+      (chip) => chip.status_for_entry === 'active',
+    );
+    const knownChipNames: readonly string[] = Object.values(FplChip);
+    const activeChip =
+      activeChipStatus && knownChipNames.includes(activeChipStatus.name)
+        ? (activeChipStatus.name as FplChip)
+        : undefined;
+
+    return {
+      teamId,
+      gameweekId,
+      playerIds: current.picks.map((pick) => pick.element),
+      bank: current.transfers.bank / 10,
+      teamValue: current.transfers.value / 10,
+      activeChip,
+    };
   }
 
   // Builds the transfer submission payload (fresh prices at execution
