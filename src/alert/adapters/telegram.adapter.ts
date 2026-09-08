@@ -9,6 +9,14 @@ const BOT_COMMANDS = [
   { command: 'status', description: 'Live free transfers + chip availability' },
   { command: 'propose', description: 'Generate and send a fresh proposal now' },
   {
+    command: 'chip',
+    description: 'Declare a chip (wildcard/freehit/bboost/3xc) and propose',
+  },
+  {
+    command: 'results',
+    description: 'Check for newly-finished gameweek results',
+  },
+  {
     command: 'login',
     description: 'Check whether the FPL session is authenticated',
   },

@@ -8,7 +8,7 @@ describe('ResultsController', () => {
 
   beforeEach(async () => {
     resultsService = {
-      checkFinishedGameweeks: jest.fn().mockResolvedValue(undefined),
+      checkFinishedGameweeks: jest.fn().mockResolvedValue(2),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -19,10 +19,10 @@ describe('ResultsController', () => {
     controller = module.get<ResultsController>(ResultsController);
   });
 
-  it('triggers the check and reports success', async () => {
+  it('triggers the check and reports success with the reported count', async () => {
     const result = await controller.triggerCheck();
 
     expect(resultsService.checkFinishedGameweeks).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ checked: true });
+    expect(result).toEqual({ checked: true, reported: 2 });
   });
 });

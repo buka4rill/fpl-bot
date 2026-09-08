@@ -9,5 +9,6 @@ import { AlertModule } from '../alert/alert.module';
   imports: [IngestionModule, ProposalModule, AlertModule],
   controllers: [ResultsController],
   providers: [ResultsService],
+  exports: [ResultsService],
 })
 export class ResultsModule {}

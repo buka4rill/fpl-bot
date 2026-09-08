@@ -5,6 +5,8 @@ import { ProposalService } from '../proposal/proposal.service';
 import { TeamStateService } from '../team-state/team-state.service';
 import { AuthService } from '../auth/auth.service';
 import { AlertService } from '../alert/alert.service';
+import { ResultsService } from '../results/results.service';
+import { FplChip } from '../common/enums/chip.enum';
 import {
   Gameweek,
   Player,
@@ -24,6 +26,7 @@ describe('TelegramCommandsService', () => {
     isAuthenticated: jest.Mock;
   };
   let alertService: { sendMessage: jest.Mock; sendProposal: jest.Mock };
+  let resultsService: { checkFinishedGameweeks: jest.Mock };
 
   const players: Player[] = [
     {
@@ -89,6 +92,9 @@ describe('TelegramCommandsService', () => {
       sendMessage: jest.fn().mockResolvedValue(undefined),
       sendProposal: jest.fn().mockResolvedValue(undefined),
     };
+    resultsService = {
+      checkFinishedGameweeks: jest.fn().mockResolvedValue(0),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -98,6 +104,7 @@ describe('TelegramCommandsService', () => {
         { provide: TeamStateService, useValue: teamStateService },
         { provide: AuthService, useValue: authService },
         { provide: AlertService, useValue: alertService },
+        { provide: ResultsService, useValue: resultsService },
       ],
     }).compile();
 
@@ -170,6 +177,92 @@ describe('TelegramCommandsService', () => {
     });
   });
 
+  describe('/chip', () => {
+    it('checks auth, then generates and sends a proposal with the declared chip', async () => {
+      await service.handleCommand('/chip bboost');
+
+      expect(authService.assertAuthenticated).toHaveBeenCalled();
+      expect(proposalService.generateProposal).toHaveBeenCalledWith(
+        undefined,
+        FplChip.BENCH_BOOST,
+      );
+      expect(alertService.sendProposal).toHaveBeenCalledWith(
+        proposal,
+        players,
+        snapshots,
+      );
+    });
+
+    it('is case-insensitive on the chip name', async () => {
+      await service.handleCommand('/chip 3XC');
+
+      expect(proposalService.generateProposal).toHaveBeenCalledWith(
+        undefined,
+        FplChip.TRIPLE_CAPTAIN,
+      );
+    });
+
+    it('reports usage when no chip name is given', async () => {
+      await service.handleCommand('/chip');
+
+      expect(alertService.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Usage: /chip'),
+      );
+      expect(proposalService.generateProposal).not.toHaveBeenCalled();
+      expect(authService.assertAuthenticated).not.toHaveBeenCalled();
+    });
+
+    it('reports usage when given an unrecognized chip name', async () => {
+      await service.handleCommand('/chip freehitzzz');
+
+      expect(alertService.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Usage: /chip'),
+      );
+      expect(proposalService.generateProposal).not.toHaveBeenCalled();
+    });
+
+    it('reports the auth error instead of generating a proposal when not authenticated', async () => {
+      authService.assertAuthenticated.mockRejectedValue(
+        new Error('Not authenticated with FPL — run `pnpm run auth:login`.'),
+      );
+
+      await service.handleCommand('/chip wildcard');
+
+      expect(proposalService.generateProposal).not.toHaveBeenCalled();
+      expect(alertService.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Not authenticated with FPL'),
+      );
+    });
+  });
+
+  describe('/results', () => {
+    it('runs the finished-gameweek check', async () => {
+      resultsService.checkFinishedGameweeks.mockResolvedValue(2);
+
+      await service.handleCommand('/results');
+
+      expect(resultsService.checkFinishedGameweeks).toHaveBeenCalled();
+    });
+
+    it('reports explicitly when nothing new was found, rather than staying silent', async () => {
+      resultsService.checkFinishedGameweeks.mockResolvedValue(0);
+
+      await service.handleCommand('/results');
+
+      expect(alertService.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('No new finished-gameweek results'),
+      );
+    });
+
+    it('sends nothing extra when results were actually reported', async () => {
+      resultsService.checkFinishedGameweeks.mockResolvedValue(1);
+
+      await service.handleCommand('/results');
+
+      expect(alertService.sendMessage).not.toHaveBeenCalled();
+    });
+  });
+
   describe('/login', () => {
     it('reports authenticated when logged in', async () => {
       authService.isAuthenticated.mockResolvedValue(true);
@@ -205,6 +298,8 @@ describe('TelegramCommandsService', () => {
       const [text] = alertService.sendMessage.mock.calls[0] as [string];
       expect(text).toContain('/status');
       expect(text).toContain('/propose');
+      expect(text).toContain('/chip');
+      expect(text).toContain('/results');
       expect(text).toContain('/login');
     });
 

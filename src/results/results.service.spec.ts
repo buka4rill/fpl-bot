@@ -109,10 +109,11 @@ describe('ResultsService', () => {
       baseProposal({ gameweekId: 4, season: '26_27' }),
     ]);
 
-    await service.checkFinishedGameweeks();
+    const reported = await service.checkFinishedGameweeks();
 
     expect(alertService.sendResultReport).toHaveBeenCalledTimes(1);
     expect(proposalService.markResultReported).toHaveBeenCalledWith('prop-1');
+    expect(reported).toBe(1);
   });
 
   it('skips a proposal whose gameweek has not finished yet', async () => {
@@ -120,10 +121,11 @@ describe('ResultsService', () => {
       baseProposal({ gameweekId: 5, season: '26_27' }),
     ]);
 
-    await service.checkFinishedGameweeks();
+    const reported = await service.checkFinishedGameweeks();
 
     expect(alertService.sendResultReport).not.toHaveBeenCalled();
     expect(proposalService.markResultReported).not.toHaveBeenCalled();
+    expect(reported).toBe(0);
   });
 
   it('does not match a finished gameweek from a different season with the same id', async () => {
@@ -195,12 +197,13 @@ describe('ResultsService', () => {
       baseProposal({ gameweekId: 4, season: '26_27' }),
     ]);
 
-    await expect(service.checkFinishedGameweeks()).resolves.not.toThrow();
+    const reported = await service.checkFinishedGameweeks();
 
     expect(proposalService.markResultReported).not.toHaveBeenCalled();
+    expect(reported).toBe(0);
   });
 
-  it('continues to the next proposal after one fails', async () => {
+  it('continues to the next proposal after one fails, counting only the successes', async () => {
     alertService.sendResultReport
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValueOnce(undefined);
@@ -209,9 +212,10 @@ describe('ResultsService', () => {
       baseProposal({ id: 'prop-2', gameweekId: 4, season: '26_27' }),
     ]);
 
-    await service.checkFinishedGameweeks();
+    const reported = await service.checkFinishedGameweeks();
 
     expect(proposalService.markResultReported).toHaveBeenCalledTimes(1);
     expect(proposalService.markResultReported).toHaveBeenCalledWith('prop-2');
+    expect(reported).toBe(1);
   });
 });

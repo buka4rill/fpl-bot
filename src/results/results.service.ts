@@ -54,7 +54,12 @@ export class ResultsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async checkFinishedGameweeks(): Promise<void> {
+  // Returns how many proposals actually got a result report sent — callers
+  // that surface this on demand (the /results-report HTTP endpoint, the
+  // /results Telegram command) use it to say "nothing new yet" explicitly
+  // rather than going quiet, the same no-silent-no-op principle the
+  // Telegram slash commands were built around.
+  async checkFinishedGameweeks(): Promise<number> {
     const { gameweeks, players, rules } =
       await this.ingestionService.getBootstrapSnapshot();
     // Keyed by (season, id) — plain gameweek-id membership would match a
@@ -67,22 +72,27 @@ export class ResultsService implements OnModuleInit, OnModuleDestroy {
     );
 
     const candidates = await this.proposalService.findUnreportedTerminal();
+    let reported = 0;
     for (const proposal of candidates) {
       if (!finishedKeys.has(`${proposal.season}:${proposal.gameweekId}`)) {
         continue;
       }
-      await this.reportResult(proposal, players, rules);
+      if (await this.reportResult(proposal, players, rules)) {
+        reported += 1;
+      }
     }
+    return reported;
   }
 
   // Best-effort per proposal — one failure (e.g. a transient fetch error)
   // must not stop the rest of the batch, and leaving resultReportedAt unset
-  // means it's simply retried on the next poll.
+  // means it's simply retried on the next poll. Returns whether it actually
+  // sent a report, so checkFinishedGameweeks can count successes.
   private async reportResult(
     proposal: Proposal,
     players: Player[],
     rules: SquadRules,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const [playerStats, { actualPoints }] = await Promise.all([
         this.ingestionService.getGameweekPlayerStats(proposal.gameweekId),
@@ -103,10 +113,12 @@ export class ResultsService implements OnModuleInit, OnModuleDestroy {
         actualPoints,
       );
       await this.proposalService.markResultReported(proposal.id);
+      return true;
     } catch (error) {
       this.logger.warn(
         `Failed to report result for proposal ${proposal.id}: ${String(error)}`,
       );
+      return false;
     }
   }
 

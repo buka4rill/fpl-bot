@@ -394,6 +394,40 @@ updates whose text starts with `/`, routed (after the same
 - **`/help`** / **`/start`** — lists the commands. Unknown commands get
   the same list appended, so a typo is never a silent no-op either.
 
+**`/chip <wildcard|freehit|bboost|3xc>`** and **`/results`** (added
+2026-09-08, later same day) — same "cover every manual HTTP endpoint
+worth having on demand" motivation as the original four, prompted by
+auditing all controllers against the command list and finding these two
+gaps (`captain-swap`/`manual-transfer`/`chip-manual` were deliberately
+left out — those are testing scaffolding built to verify execution auth
+against the disposable account, not ongoing product features; see
+"Execution auth" above).
+
+- **`/chip <name>`** — same as `POST /proposal/chip`: declares a chip and
+  runs it through the real optimizer (transfers included), not a
+  squad-unchanged shortcut. The chip name is the raw `FplChip` enum value
+  (`wildcard`/`freehit`/`bboost`/`3xc`) — the same string the HTTP body
+  already expects, so there's only one contract to remember rather than a
+  second set of chat aliases. Case-insensitive; missing or unrecognized
+  names get a `Usage: /chip <...>` reply instead of silently doing
+  nothing.
+- **`/results`** — same check `ResultsService`'s hourly poll runs
+  (`POST /results/report`), triggered on demand instead of waiting for
+  it. `ResultsService.checkFinishedGameweeks()` now returns how many
+  proposals it actually reported on (previously `void`) specifically so
+  this command (and the HTTP endpoint, now `{checked, reported}`) can say
+  "no new finished-gameweek results yet" explicitly rather than going
+  quiet when there's nothing to report — the same no-silent-no-op
+  principle the rest of this feature was built around. When there *is*
+  something to report, `checkFinishedGameweeks()` already sends its own
+  `📊 GW{n} Result` message per proposal, so the command adds nothing on
+  top of that.
+
+`ResultsModule` now exports `ResultsService` (previously provider-only)
+so `TelegramCommandsModule` can inject it — no other change to
+`ResultsModule` itself; the hourly poll (`onModuleInit`'s `setInterval`)
+is unaffected.
+
 Every command is best-effort and self-reporting: any failure inside
 `TelegramCommandsService.handleCommand` is caught and sent back over
 Telegram with the underlying error's own message, rather than the command

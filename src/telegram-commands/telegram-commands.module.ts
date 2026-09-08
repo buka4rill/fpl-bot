@@ -5,6 +5,7 @@ import { ProposalModule } from '../proposal/proposal.module';
 import { TeamStateModule } from '../team-state/team-state.module';
 import { AuthModule } from '../auth/auth.module';
 import { AlertModule } from '../alert/alert.module';
+import { ResultsModule } from '../results/results.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { AlertModule } from '../alert/alert.module';
     TeamStateModule,
     AuthModule,
     AlertModule,
+    ResultsModule,
   ],
   providers: [TelegramCommandsService],
   exports: [TelegramCommandsService],

@@ -4,11 +4,17 @@ import { ProposalService } from '../proposal/proposal.service';
 import { TeamStateService } from '../team-state/team-state.service';
 import { AuthService } from '../auth/auth.service';
 import { AlertService } from '../alert/alert.service';
+import { ResultsService } from '../results/results.service';
+import { FplChip } from '../common/enums/chip.enum';
+
+const CHIP_NAMES = Object.values(FplChip).join('|');
 
 const HELP_TEXT = [
   '🤖 *Available commands*',
   '/status — live free transfers + chip availability',
   '/propose — generate and send a fresh proposal now',
+  `/chip <${CHIP_NAMES}> — declare a chip and propose with it factored in`,
+  '/results — check for any newly-finished gameweek results to report',
   '/login — check whether the FPL session is currently authenticated',
   '/help — show this list',
 ].join('\n');
@@ -38,6 +44,7 @@ export class TelegramCommandsService {
     private readonly teamStateService: TeamStateService,
     private readonly authService: AuthService,
     private readonly alertService: AlertService,
+    private readonly resultsService: ResultsService,
   ) {}
 
   // Best-effort per command: any failure is caught and reported back over
@@ -46,9 +53,11 @@ export class TelegramCommandsService {
   // a command never just silently does nothing, the exact complaint that
   // motivated building this in the first place.
   async handleCommand(text: string): Promise<void> {
-    // Strip a group-chat "@BotName" suffix and any arguments — none of
-    // these commands take one today.
-    const command = text.trim().split(/[\s@]/)[0].toLowerCase();
+    // Strip a group-chat "@BotName" suffix from the command itself; the
+    // rest of the message (if any — only /chip takes one today) is passed
+    // through as args.
+    const [rawCommand, ...args] = text.trim().split(/\s+/);
+    const command = rawCommand.split('@')[0].toLowerCase();
     try {
       switch (command) {
         case '/status':
@@ -56,6 +65,12 @@ export class TelegramCommandsService {
           break;
         case '/propose':
           await this.handlePropose();
+          break;
+        case '/chip':
+          await this.handleChip(args);
+          break;
+        case '/results':
+          await this.handleResults();
           break;
         case '/login':
           await this.handleLoginStatus();
@@ -106,6 +121,46 @@ export class TelegramCommandsService {
       teamState.freeTransfers,
     );
     await this.alertService.sendProposal(proposal, players, snapshots);
+  }
+
+  // Mirrors ProposalController.proposeChip: declares a chip and runs it
+  // through the real optimizer (transfers included) rather than just
+  // keeping the current squad as-is, same as the HTTP endpoint. Chip names
+  // are the raw FplChip enum values (wildcard/freehit/bboost/3xc) — the
+  // same strings the HTTP endpoint's body.chip already expects, so there's
+  // only one contract to remember rather than a second set of chat aliases.
+  private async handleChip(args: string[]): Promise<void> {
+    const requested = args[0]?.toLowerCase();
+    const knownChipNames: readonly string[] = Object.values(FplChip);
+    const chip =
+      requested && knownChipNames.includes(requested)
+        ? (requested as FplChip)
+        : undefined;
+    if (!chip) {
+      await this.alertService.sendMessage(`Usage: /chip <${CHIP_NAMES}>`);
+      return;
+    }
+    await this.authService.assertAuthenticated();
+    const [proposal, { players, snapshots }] = await Promise.all([
+      this.proposalService.generateProposal(undefined, chip),
+      this.ingestionService.getBootstrapSnapshot(),
+    ]);
+    await this.alertService.sendProposal(proposal, players, snapshots);
+  }
+
+  // Mirrors POST /results/report: runs the same check ResultsService's
+  // hourly poll does, right now, rather than waiting for it.
+  // checkFinishedGameweeks() already sends its own 📊 report per
+  // newly-finished proposal; this only adds a message for the "nothing new
+  // yet" case, so the command isn't a silent no-op when there's nothing to
+  // report.
+  private async handleResults(): Promise<void> {
+    const reported = await this.resultsService.checkFinishedGameweeks();
+    if (reported === 0) {
+      await this.alertService.sendMessage(
+        'No new finished-gameweek results to report yet.',
+      );
+    }
   }
 
   private async handleLoginStatus(): Promise<void> {

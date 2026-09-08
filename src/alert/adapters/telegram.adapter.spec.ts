@@ -114,6 +114,8 @@ describe('TelegramAdapter', () => {
         expect.arrayContaining([
           expect.objectContaining({ command: 'status' }),
           expect.objectContaining({ command: 'propose' }),
+          expect.objectContaining({ command: 'chip' }),
+          expect.objectContaining({ command: 'results' }),
           expect.objectContaining({ command: 'login' }),
           expect.objectContaining({ command: 'help' }),
         ]),
