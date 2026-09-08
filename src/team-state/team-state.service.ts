@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AlertService } from '../alert/alert.service';
+import { ProposalService } from '../proposal/proposal.service';
+import { IngestionService } from '../ingestion/ingestion.service';
 import { TeamStateEntity } from '../persistence/entities/team-state.entity';
 import { TeamState } from '../common/types/domain.types';
 
@@ -110,6 +112,8 @@ export class TeamStateService {
     @InjectRepository(TeamStateEntity)
     private readonly repository: Repository<TeamStateEntity>,
     private readonly alertService: AlertService,
+    private readonly proposalService: ProposalService,
+    private readonly ingestionService: IngestionService,
     private readonly config: ConfigService,
   ) {}
 
@@ -252,8 +256,9 @@ export class TeamStateService {
 
     if (next === null) {
       await this.alertService.sendMessage(
-        `✅ Thanks — I'll generate GW${gameweekId}'s proposal shortly.`,
+        `✅ Thanks — generating GW${gameweekId}'s proposal now.`,
       );
+      await this.tryGenerateProposal(gameweekId, state.freeTransfers);
       return;
     }
     if (next === 'free_transfers') return; // unreachable in practice
@@ -262,5 +267,37 @@ export class TeamStateService {
       CHIP_STEP_QUESTION[next],
       `chipavail:${gameweekId}:${next}`,
     );
+  }
+
+  // Generates and sends this week's proposal the moment the prompt is fully
+  // answered, rather than waiting for DeadlineWatcherService's next hourly
+  // poll — "shortly" should mean shortly, not "up to an hour." Best-effort:
+  // on failure this only logs, it never surfaces a second Telegram error on
+  // top of the completion message already sent — the next automatic poll
+  // retries it, same as any other transient failure there. Checking
+  // findByGameweekId first avoids double-proposing in the (rare, already
+  // tolerated elsewhere) case that an hourly poll fires at the same moment
+  // — ProposalEntity.gameweekId is deliberately not unique for exactly this
+  // kind of overlap.
+  private async tryGenerateProposal(
+    gameweekId: number,
+    freeTransfers: number | null,
+  ): Promise<void> {
+    try {
+      if (freeTransfers === null) return;
+      const alreadyProposed =
+        await this.proposalService.findByGameweekId(gameweekId);
+      if (alreadyProposed) return;
+
+      const [proposal, { players, snapshots }] = await Promise.all([
+        this.proposalService.generateProposal(freeTransfers),
+        this.ingestionService.getBootstrapSnapshot(),
+      ]);
+      await this.alertService.sendProposal(proposal, players, snapshots);
+    } catch (error) {
+      this.logger.error(
+        `Failed to generate GW${gameweekId} proposal after the weekly prompt completed: ${String(error)}`,
+      );
+    }
   }
 }

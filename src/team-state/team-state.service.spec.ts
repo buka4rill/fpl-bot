@@ -3,7 +3,11 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { TeamStateService } from './team-state.service';
 import { AlertService } from '../alert/alert.service';
+import { ProposalService } from '../proposal/proposal.service';
+import { IngestionService } from '../ingestion/ingestion.service';
 import { TeamStateEntity } from '../persistence/entities/team-state.entity';
+import { Proposal } from '../common/types/domain.types';
+import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
 // Minimal in-memory stand-in for Repository<TeamStateEntity> — mirrors the
 // real Postgres table's identity/upsert-by-teamId semantics without a live
@@ -27,11 +31,49 @@ class FakeTeamStateRepository {
 
 describe('TeamStateService', () => {
   let service: TeamStateService;
-  let alertService: { sendMessage: jest.Mock; sendYesNoPrompt: jest.Mock };
+  let alertService: {
+    sendMessage: jest.Mock;
+    sendYesNoPrompt: jest.Mock;
+    sendProposal: jest.Mock;
+  };
+  let proposalService: {
+    findByGameweekId: jest.Mock;
+    generateProposal: jest.Mock;
+  };
+  let ingestionService: { getBootstrapSnapshot: jest.Mock };
   const TEAM_ID = 42;
 
+  const proposal: Proposal = {
+    id: 'prop-1',
+    gameweekId: 4,
+    deadlineAt: '2026-09-12T12:30:00Z',
+    transfers: [],
+    lineup: [],
+    benchGoalkeeperId: 1,
+    benchOutfieldIds: [],
+    captainId: 1,
+    viceCaptainId: 1,
+    expectedGain: 10,
+    hitCost: 0,
+    status: ProposalStatus.PENDING,
+    createdAt: '2026-09-05T00:00:00Z',
+  };
+
   const setup = async (): Promise<void> => {
-    alertService = { sendMessage: jest.fn(), sendYesNoPrompt: jest.fn() };
+    alertService = {
+      sendMessage: jest.fn(),
+      sendYesNoPrompt: jest.fn(),
+      sendProposal: jest.fn(),
+    };
+    proposalService = {
+      findByGameweekId: jest.fn().mockResolvedValue(undefined),
+      generateProposal: jest.fn().mockResolvedValue(proposal),
+    };
+    ingestionService = {
+      getBootstrapSnapshot: jest
+        .fn()
+        .mockResolvedValue({ gameweeks: [], players: [], snapshots: [] }),
+    };
     const config = {
       get: jest.fn((key: string) =>
         key === 'fpl.teamId' ? String(TEAM_ID) : undefined,
@@ -46,6 +88,8 @@ describe('TeamStateService', () => {
           useClass: FakeTeamStateRepository,
         },
         { provide: AlertService, useValue: alertService },
+        { provide: ProposalService, useValue: proposalService },
+        { provide: IngestionService, useValue: ingestionService },
         { provide: ConfigService, useValue: config },
       ],
     }).compile();
@@ -56,6 +100,17 @@ describe('TeamStateService', () => {
   beforeEach(async () => {
     await setup();
   });
+
+  // Walks a full gw4 sequence (all first-half chips answered "yes") to
+  // completion — shared by tests that just need to get there.
+  const completeGw4Sequence = async (freeTransfers = '2'): Promise<void> => {
+    await service.ensureWeeklyPromptStarted(4);
+    await service.handleTextReply(freeTransfers);
+    await service.handleChipReply(4, 'wildcard1', 'yes');
+    await service.handleChipReply(4, 'freeHit1', 'yes');
+    await service.handleChipReply(4, 'benchBoost1', 'yes');
+    await service.handleChipReply(4, 'tripleCaptain1', 'yes');
+  };
 
   describe('isFreshFor', () => {
     it('is false when no row exists yet (lazily creates one)', async () => {
@@ -209,17 +264,35 @@ describe('TeamStateService', () => {
     });
 
     it('clears the pending step and sends a completion message once the sequence is done', async () => {
-      await service.ensureWeeklyPromptStarted(4);
-      await service.handleTextReply('1');
-      await service.handleChipReply(4, 'wildcard1', 'yes');
-      await service.handleChipReply(4, 'freeHit1', 'yes');
-      await service.handleChipReply(4, 'benchBoost1', 'yes');
-      await service.handleChipReply(4, 'tripleCaptain1', 'yes');
+      await completeGw4Sequence();
 
       expect(alertService.sendMessage).toHaveBeenCalledWith(
-        expect.stringContaining("I'll generate"),
+        expect.stringContaining('generating GW4'),
       );
       expect(await service.isFreshFor(4)).toBe(true);
+    });
+
+    it('generates and sends the proposal immediately once the sequence completes', async () => {
+      await completeGw4Sequence('2');
+
+      expect(proposalService.generateProposal).toHaveBeenCalledWith(2);
+      expect(alertService.sendProposal).toHaveBeenCalledWith(proposal, [], []);
+    });
+
+    it('does not generate a proposal if one already exists for the gameweek', async () => {
+      proposalService.findByGameweekId.mockResolvedValue(proposal);
+
+      await completeGw4Sequence();
+
+      expect(proposalService.generateProposal).not.toHaveBeenCalled();
+      expect(alertService.sendProposal).not.toHaveBeenCalled();
+    });
+
+    it('logs rather than throws when generation fails after completion', async () => {
+      proposalService.generateProposal.mockRejectedValue(new Error('boom'));
+
+      await expect(completeGw4Sequence()).resolves.toBeUndefined();
+      expect(alertService.sendProposal).not.toHaveBeenCalled();
     });
   });
 
