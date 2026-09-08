@@ -151,6 +151,10 @@ describe('SquadOptimizerService', () => {
     expect(result.totalPredictedPoints).toBe(38);
     expect(result.transfers).toEqual([]);
     expect(result.hitCost).toBe(0);
+    // Guards the evaluateStrategy/optimizeSquad split: optimizeSquad must
+    // fetch predictions exactly once, not once per candidate a caller like
+    // ChipEvaluatorService might evaluate.
+    expect(predictionService.predictGameweek).toHaveBeenCalledTimes(1);
   });
 
   it('excludes an otherwise-better player when it would breach the club limit', async () => {

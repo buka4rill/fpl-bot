@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import solver, { Model, SolveResult } from 'javascript-lp-solver';
-import { PredictionService } from '../prediction/prediction.service';
+import {
+  PredictionResult,
+  PredictionService,
+} from '../prediction/prediction.service';
 import {
   CurrentSquad,
   Gameweek,
@@ -63,8 +66,23 @@ export class SquadOptimizerService {
     freeTransfers = 1,
     chip?: FplChip,
   ): Promise<SquadOptimizationResult> {
+    const prediction = await this.predictionService.predictGameweek();
+    return this.evaluateStrategy(prediction, freeTransfers, chip);
+  }
+
+  // Pure, synchronous (selectSquad/selectStartingLineup/deriveTransfers do
+  // no I/O — solver.Solve() is synchronous) — takes an already-fetched
+  // PredictionResult so a caller comparing several chip candidates for the
+  // same gameweek (ChipEvaluatorService) can fetch predictions once and
+  // evaluate each candidate in-memory, rather than re-fetching (and
+  // re-hitting the authenticated my-team endpoint) once per candidate.
+  evaluateStrategy(
+    prediction: PredictionResult,
+    freeTransfers = 1,
+    chip?: FplChip,
+  ): SquadOptimizationResult {
     const { players, rules, targetGameweek, currentSquad, predictions } =
-      await this.predictionService.predictGameweek();
+      prediction;
 
     const playerById = new Map(players.map((p) => [p.id, p]));
     const pointsByPlayerId = new Map(

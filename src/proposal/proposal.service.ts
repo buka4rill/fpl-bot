@@ -3,6 +3,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { SquadOptimizerService } from '../optimization/squad-optimizer.service';
+import {
+  ChipCandidate,
+  ChipEvaluatorService,
+} from '../optimization/chip-evaluator.service';
 import { Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { ProposalEntity } from '../persistence/entities/proposal.entity';
@@ -12,6 +16,7 @@ import { FplChip } from '../common/enums/chip.enum';
 export class ProposalService {
   constructor(
     private readonly squadOptimizerService: SquadOptimizerService,
+    private readonly chipEvaluatorService: ChipEvaluatorService,
     @InjectRepository(ProposalEntity)
     private readonly proposalRepository: Repository<ProposalEntity>,
   ) {}
@@ -48,6 +53,36 @@ export class ProposalService {
       expectedGain: optimization.totalPredictedPoints - optimization.hitCost,
       hitCost: optimization.hitCost,
     });
+  }
+
+  // "Decide for me" path — compares no chip against every chip currently
+  // available for this account (see ChipEvaluatorService) and proposes
+  // whichever nets the highest real expected points, rather than always
+  // assuming chip-free like generateProposal does when called without one.
+  async generateBestProposal(
+    freeTransfers?: number,
+    availableChips?: FplChip[],
+  ): Promise<{ proposal: Proposal; candidates: ChipCandidate[] }> {
+    const { best, candidates } =
+      await this.chipEvaluatorService.evaluateBestStrategy(
+        freeTransfers,
+        availableChips,
+      );
+    const proposal = await this.store({
+      gameweekId: best.optimization.targetGameweek.id,
+      season: best.optimization.targetGameweek.season,
+      deadlineAt: best.optimization.targetGameweek.deadlineAt,
+      transfers: best.optimization.transfers,
+      lineup: best.optimization.startingXI,
+      benchGoalkeeperId: best.optimization.benchGoalkeeperId,
+      benchOutfieldIds: best.optimization.benchOutfieldIds,
+      captainId: best.optimization.captainId,
+      viceCaptainId: best.optimization.viceCaptainId,
+      chip: best.chip,
+      expectedGain: best.netExpectedPoints,
+      hitCost: best.optimization.hitCost,
+    });
+    return { proposal, candidates };
   }
 
   // Shared by any proposal source (the optimizer, or a manual override like a

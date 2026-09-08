@@ -42,7 +42,7 @@ file is the short version for whichever session picks this repo up next.
 | `ingestion` | implemented — bootstrap-static, fixtures, element-summary, live-gameweek, current-squad |
 | `trends` | scaffolded — curated source whitelist, not consumed yet |
 | `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder. Now also models FPL's defensive-contribution rule (2026-09-08) — see "Defensive-contribution scoring" below |
-| `optimization` | implemented — squad optimizer (ILP) + chip evaluator. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
+| `optimization` | implemented — squad optimizer (ILP) + chip evaluator, the latter a real same-week multi-strategy comparison as of 2026-09-08 (was a stub before) — see "Open question: single-strategy optimizer..." below. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
 | `team-state` | implemented (2026-09-08, rebuilt same day) — reads free transfers + chip availability live from FPL's authenticated my-team endpoint (via `ExecutionService`) and sends it as an informational Telegram report before each week's proposal; no persistence, never blocks; `POST /team-state/report` manually re-triggers it for testing — see "Weekly team-status report" below |
 | `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), `POST /proposal/chip` (declare a chip for this week's proposal, goes through the real optimizer), and `POST /proposal/chip-manual` (declare a chip on the current live squad unchanged, bypassing the optimizer — used to verify Bench Boost live, see "Execution auth" below) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
@@ -433,6 +433,46 @@ started — needs its own design pass (probably its own plan-mode session)
 rather than a quick change, given how many modules it touches and how many
 real modeling decisions it involves (how to price "hold value," how to
 compare a chip's one-time payoff against an ongoing transfer plan, etc.).
+
+**Same-week half implemented 2026-09-08 — `ChipEvaluatorService` is no
+longer a stub.** Comparing "no chip" against every chip available for the
+*single upcoming* gameweek (Wildcard/Free Hit/Bench Boost/Triple Captain)
+is now real: `evaluateBestStrategy()` fetches predictions once, then runs
+`SquadOptimizerService.evaluateStrategy()` (new — the pure, synchronous
+half of `optimizeSquad()`, split out specifically so comparing several
+candidates doesn't multiply live FPL calls, including the authenticated
+my-team endpoint) once per candidate in-memory. Correctly reconstructs
+each candidate's *real* expected total — `SquadOptimizationResult
+.totalPredictedPoints` is XI-only with the captain counted once, so Bench
+Boost (all 15 count) and Triple Captain (captain x3) had zero effect on it
+before this; `ChipEvaluatorService.netExpectedPoints()` adds the captain
+multiplier (every candidate, not just Triple Captain — plain captaincy
+already doubles the captain every week, it's not a chip effect) and Bench
+Boost's bench points on top. Candidates are restricted to whatever
+`TeamState.chips` reports as `'available'` for the account (already
+fetched at every relevant call site for `freeTransfers` — free to wire in,
+no new API calls) so a chip the account can't actually play is never
+proposed in the first place.
+`ProposalService.generateBestProposal()` is the new "decide for me" path
+— `DeadlineWatcherService`, `/proposal/generate`, and `/propose` all
+switched to it; `generateProposal(freeTransfers, chip)` is untouched and
+still backs the explicit-chip manual paths (`/proposal/chip`, `/chip`).
+The Telegram alert shows a `📊 Considered: ...` line (all candidates +
+their net expected points) whenever more than one was actually compared.
+
+**Still not started — the genuinely hard part**: timing/hold value
+(comparing this week's Wildcard against holding for a better week) and
+`TrendsModule` integration. Investigated live while scoping the above:
+this is a real code gap, not a missing-data one —
+`PredictionService.predictGameweek()` is hardcoded to whichever gameweek
+`bootstrap-static` marks `isNext`, with no path to request a future one.
+FPL's own `element-summary/{id}/` (already called by
+`FplPublicClient.elementSummary()`) already returns **every remaining
+fixture for the season** (confirmed live: 35, not just 3) with
+per-fixture `event`/`difficulty`, so fixture-swing awareness and
+double-gameweek detection (two fixtures sharing an `event` for one team)
+don't need a new data source either — just a multi-gameweek prediction
+loop, which is real engineering work, not blocked on anything external.
 
 For local webhook testing (tapping Approve/Reject against a real Telegram
 callback), `pnpm run dev:webhook` automates the tunnel + webhook wiring —

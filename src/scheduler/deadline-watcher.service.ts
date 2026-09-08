@@ -11,6 +11,7 @@ import { AlertService } from '../alert/alert.service';
 import { ApprovalService } from '../approval/approval.service';
 import { TeamStateService } from '../team-state/team-state.service';
 import { AuthService } from '../auth/auth.service';
+import { FplChip } from '../common/enums/chip.enum';
 
 // Polls hourly rather than daily (ARCHITECTURE.md's "coarse, e.g. daily"
 // suggestion) so the trigger window is never missed even with a small
@@ -139,10 +140,20 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
       const teamState = await this.teamStateService.reportTeamState(
         targetGameweek.id,
       );
-      const proposal = await this.proposalService.generateProposal(
-        teamState.freeTransfers,
+      const availableChips = teamState.chips
+        .filter((c) => c.status_for_entry === 'available')
+        .map((c) => c.name as FplChip);
+      const { proposal, candidates } =
+        await this.proposalService.generateBestProposal(
+          teamState.freeTransfers,
+          availableChips,
+        );
+      await this.alertService.sendProposal(
+        proposal,
+        players,
+        snapshots,
+        candidates,
       );
-      await this.alertService.sendProposal(proposal, players, snapshots);
     } catch (error) {
       this.lastClaimedGameweekId = undefined;
       throw error;

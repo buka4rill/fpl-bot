@@ -39,11 +39,21 @@ export class ProposalController {
     const teamState = await this.teamStateService.reportTeamState(
       targetGameweek.id,
     );
-    const proposal = await this.proposalService.generateProposal(
-      teamState.freeTransfers,
-    );
+    const availableChips = teamState.chips
+      .filter((c) => c.status_for_entry === 'available')
+      .map((c) => c.name as FplChip);
+    const { proposal, candidates } =
+      await this.proposalService.generateBestProposal(
+        teamState.freeTransfers,
+        availableChips,
+      );
 
-    await this.alertService.sendProposal(proposal, players, snapshots);
+    await this.alertService.sendProposal(
+      proposal,
+      players,
+      snapshots,
+      candidates,
+    );
     return { proposalId: proposal.id };
   }
 

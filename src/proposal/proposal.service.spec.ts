@@ -3,6 +3,10 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ProposalService } from './proposal.service';
 import { SquadOptimizerService } from '../optimization/squad-optimizer.service';
 import { SquadOptimizationResult } from '../optimization/squad-optimizer.service';
+import {
+  ChipCandidate,
+  ChipEvaluatorService,
+} from '../optimization/chip-evaluator.service';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { ProposalEntity } from '../persistence/entities/proposal.entity';
 import { FplChip } from '../common/enums/chip.enum';
@@ -65,6 +69,7 @@ class FakeProposalRepository {
 describe('ProposalService', () => {
   let service: ProposalService;
   let squadOptimizerService: { optimizeSquad: jest.Mock };
+  let chipEvaluatorService: { evaluateBestStrategy: jest.Mock };
 
   const optimization: SquadOptimizationResult = {
     targetGameweek: {
@@ -90,11 +95,15 @@ describe('ProposalService', () => {
     squadOptimizerService = {
       optimizeSquad: jest.fn().mockResolvedValue(optimization),
     };
+    chipEvaluatorService = {
+      evaluateBestStrategy: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProposalService,
         { provide: SquadOptimizerService, useValue: squadOptimizerService },
+        { provide: ChipEvaluatorService, useValue: chipEvaluatorService },
         {
           provide: getRepositoryToken(ProposalEntity),
           useClass: FakeProposalRepository,
@@ -212,6 +221,42 @@ describe('ProposalService', () => {
       FplChip.WILDCARD,
     );
     expect(proposal.chip).toBe(FplChip.WILDCARD);
+  });
+
+  describe('generateBestProposal', () => {
+    const candidates: ChipCandidate[] = [
+      { chip: undefined, optimization, netExpectedPoints: 50 },
+      { chip: FplChip.WILDCARD, optimization, netExpectedPoints: 60 },
+    ];
+
+    it('stores a proposal using the winning candidate', async () => {
+      chipEvaluatorService.evaluateBestStrategy.mockResolvedValue({
+        best: candidates[1],
+        candidates,
+      });
+
+      const { proposal, candidates: returned } =
+        await service.generateBestProposal();
+
+      expect(proposal.chip).toBe(FplChip.WILDCARD);
+      expect(proposal.expectedGain).toBe(60); // netExpectedPoints, not the XI-only formula
+      expect(proposal.status).toBe(ProposalStatus.PENDING);
+      expect(returned).toBe(candidates);
+    });
+
+    it('passes freeTransfers/availableChips through to the evaluator', async () => {
+      chipEvaluatorService.evaluateBestStrategy.mockResolvedValue({
+        best: candidates[0],
+        candidates,
+      });
+
+      await service.generateBestProposal(2, [FplChip.BENCH_BOOST]);
+
+      expect(chipEvaluatorService.evaluateBestStrategy).toHaveBeenCalledWith(
+        2,
+        [FplChip.BENCH_BOOST],
+      );
+    });
   });
 
   it('records the applied-manually answer and persists it', async () => {

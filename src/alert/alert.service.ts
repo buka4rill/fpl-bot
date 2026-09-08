@@ -4,6 +4,7 @@ import { Player, PlayerSnapshot, Proposal } from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
 import { FplChip } from '../common/enums/chip.enum';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
+import type { ChipCandidate } from '../optimization/chip-evaluator.service';
 
 const POSITION_ORDER: Position[] = [
   Position.GKP,
@@ -31,8 +32,9 @@ export class AlertService {
     proposal: Proposal,
     players: Player[],
     snapshots: PlayerSnapshot[],
+    candidates?: ChipCandidate[],
   ): Promise<void> {
-    const text = this.renderMessage(proposal, players, snapshots);
+    const text = this.renderMessage(proposal, players, snapshots, candidates);
     await this.telegram.sendProposalAlert(text, proposal.id);
   }
 
@@ -158,6 +160,7 @@ export class AlertService {
     proposal: Proposal,
     players: Player[],
     snapshots: PlayerSnapshot[],
+    candidates?: ChipCandidate[],
   ): string {
     const playerById = new Map(players.map((p) => [p.id, p]));
     const priceById = new Map(snapshots.map((s) => [s.playerId, s.price]));
@@ -190,6 +193,25 @@ export class AlertService {
     // the owner approved a Bench Boost proposal without realizing it).
     if (proposal.chip) {
       lines.push(`🃏 Chip: ${CHIP_LABELS[proposal.chip]}`, '');
+    }
+
+    // Only shown when the proposal came from comparing several candidates
+    // (generateBestProposal) — explains *why* this plan was picked, right
+    // alongside the chip line since that's the fact it's justifying.
+    if (candidates && candidates.length > 1) {
+      const chipLabel = (chip: FplChip | undefined): string =>
+        chip ? CHIP_LABELS[chip] : 'No chip';
+      const summary = candidates
+        .map((c) => {
+          const value = c.netExpectedPoints;
+          const sign = value >= 0 ? '+' : '';
+          return `${chipLabel(c.chip)} ${sign}${value.toFixed(1)}`;
+        })
+        .join(' · ');
+      lines.push(
+        `📊 Considered: ${summary} → picked ${chipLabel(proposal.chip)}`,
+        '',
+      );
     }
 
     if (proposal.transfers.length === 0) {

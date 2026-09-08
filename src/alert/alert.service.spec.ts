@@ -229,6 +229,36 @@ describe('AlertService', () => {
     expect(text).toContain(`🃏 Chip: ${label}`);
   });
 
+  it('shows what was considered when multiple candidates were compared', async () => {
+    await service.sendProposal(
+      { ...proposal, chip: FplChip.WILDCARD },
+      players,
+      snapshots,
+      [
+        { chip: undefined, optimization: {} as never, netExpectedPoints: 60 },
+        {
+          chip: FplChip.WILDCARD,
+          optimization: {} as never,
+          netExpectedPoints: 65.4,
+        },
+      ],
+    );
+
+    const [text] = telegram.sendProposalAlert.mock.calls[0] as [string];
+    expect(text).toContain(
+      '📊 Considered: No chip +60.0 · Wildcard +65.4 → picked Wildcard',
+    );
+  });
+
+  it('says nothing about candidates when only one (or none) was given', async () => {
+    await service.sendProposal(proposal, players, snapshots, [
+      { chip: undefined, optimization: {} as never, netExpectedPoints: 60 },
+    ]);
+
+    const [text] = telegram.sendProposalAlert.mock.calls[0] as [string];
+    expect(text).not.toContain('📊 Considered');
+  });
+
   it('delegates sendMessage to the telegram adapter', async () => {
     await service.sendMessage('hello');
 

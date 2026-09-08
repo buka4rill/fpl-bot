@@ -21,7 +21,7 @@ describe('DeadlineWatcherService', () => {
   let service: DeadlineWatcherService;
   let ingestionService: { getBootstrapSnapshot: jest.Mock };
   let proposalService: {
-    generateProposal: jest.Mock;
+    generateBestProposal: jest.Mock;
     findBySeasonAndGameweekId: jest.Mock;
   };
   let alertService: { sendProposal: jest.Mock; sendMessage: jest.Mock };
@@ -78,7 +78,9 @@ describe('DeadlineWatcherService', () => {
   beforeEach(async () => {
     ingestionService = { getBootstrapSnapshot: jest.fn() };
     proposalService = {
-      generateProposal: jest.fn().mockResolvedValue(proposal),
+      generateBestProposal: jest
+        .fn()
+        .mockResolvedValue({ proposal, candidates: [] }),
       findBySeasonAndGameweekId: jest.fn().mockResolvedValue(undefined),
     };
     alertService = { sendProposal: jest.fn(), sendMessage: jest.fn() };
@@ -131,7 +133,7 @@ describe('DeadlineWatcherService', () => {
 
     await service.checkDeadline();
 
-    expect(proposalService.generateProposal).not.toHaveBeenCalled();
+    expect(proposalService.generateBestProposal).not.toHaveBeenCalled();
   });
 
   it('does nothing before the lead-time window opens', async () => {
@@ -144,7 +146,7 @@ describe('DeadlineWatcherService', () => {
 
     await service.checkDeadline();
 
-    expect(proposalService.generateProposal).not.toHaveBeenCalled();
+    expect(proposalService.generateBestProposal).not.toHaveBeenCalled();
   });
 
   it('does nothing once the deadline has already passed', async () => {
@@ -156,7 +158,7 @@ describe('DeadlineWatcherService', () => {
 
     await service.checkDeadline();
 
-    expect(proposalService.generateProposal).not.toHaveBeenCalled();
+    expect(proposalService.generateBestProposal).not.toHaveBeenCalled();
   });
 
   it('generates and sends a proposal within the lead-time window', async () => {
@@ -169,12 +171,13 @@ describe('DeadlineWatcherService', () => {
 
     await service.checkDeadline();
 
-    expect(proposalService.generateProposal).toHaveBeenCalledTimes(1);
-    expect(proposalService.generateProposal).toHaveBeenCalledWith(1);
+    expect(proposalService.generateBestProposal).toHaveBeenCalledTimes(1);
+    expect(proposalService.generateBestProposal).toHaveBeenCalledWith(1, []);
     expect(alertService.sendProposal).toHaveBeenCalledWith(
       proposal,
       players,
       snapshots,
+      [],
     );
   });
 
@@ -194,7 +197,7 @@ describe('DeadlineWatcherService', () => {
     await service.checkDeadline();
 
     expect(teamStateService.reportTeamState).toHaveBeenCalledWith(4);
-    expect(proposalService.generateProposal).toHaveBeenCalledWith(3);
+    expect(proposalService.generateBestProposal).toHaveBeenCalledWith(3, []);
   });
 
   it('blocks proposal generation and prompts once when not authenticated', async () => {
@@ -208,7 +211,7 @@ describe('DeadlineWatcherService', () => {
     await service.checkDeadline();
     await service.checkDeadline();
 
-    expect(proposalService.generateProposal).not.toHaveBeenCalled();
+    expect(proposalService.generateBestProposal).not.toHaveBeenCalled();
     expect(alertService.sendMessage).toHaveBeenCalledTimes(1);
     expect(alertService.sendMessage).toHaveBeenCalledWith(
       expect.stringContaining('auth:login'),
@@ -228,7 +231,7 @@ describe('DeadlineWatcherService', () => {
     await service.checkDeadline(); // now authenticated
 
     expect(alertService.sendMessage).toHaveBeenCalledTimes(1);
-    expect(proposalService.generateProposal).toHaveBeenCalledTimes(1);
+    expect(proposalService.generateBestProposal).toHaveBeenCalledTimes(1);
   });
 
   it('does not re-propose a gameweek already persisted before a restart', async () => {
@@ -243,7 +246,7 @@ describe('DeadlineWatcherService', () => {
 
     await service.checkDeadline();
 
-    expect(proposalService.generateProposal).not.toHaveBeenCalled();
+    expect(proposalService.generateBestProposal).not.toHaveBeenCalled();
   });
 
   it('checks the dedupe lookup by season, not gameweek id alone', async () => {
@@ -275,18 +278,21 @@ describe('DeadlineWatcherService', () => {
     await service.checkDeadline();
     await service.checkDeadline();
 
-    expect(proposalService.generateProposal).toHaveBeenCalledTimes(1);
+    expect(proposalService.generateBestProposal).toHaveBeenCalledTimes(1);
   });
 
   it('does not double-propose when two checks genuinely overlap', async () => {
     // Regression test: mockResolvedValue resolves near-instantly, which
     // hides a race where the guard is checked long before the async work
     // (a real network call) finishes and the claim is recorded. Holding
-    // generateProposal open lets both checkDeadline() calls actually
+    // generateBestProposal open lets both checkDeadline() calls actually
     // interleave, the way they did live against the real API.
-    let resolveGenerate!: (value: Proposal) => void;
-    proposalService.generateProposal.mockReturnValue(
-      new Promise<Proposal>((resolve) => {
+    let resolveGenerate!: (value: {
+      proposal: Proposal;
+      candidates: [];
+    }) => void;
+    proposalService.generateBestProposal.mockReturnValue(
+      new Promise<{ proposal: Proposal; candidates: [] }>((resolve) => {
         resolveGenerate = resolve;
       }),
     );
@@ -298,10 +304,10 @@ describe('DeadlineWatcherService', () => {
 
     const first = service.checkDeadline();
     const second = service.checkDeadline();
-    resolveGenerate(proposal);
+    resolveGenerate({ proposal, candidates: [] });
     await Promise.all([first, second]);
 
-    expect(proposalService.generateProposal).toHaveBeenCalledTimes(1);
+    expect(proposalService.generateBestProposal).toHaveBeenCalledTimes(1);
   });
 
   it('rolls back the claim on failure so the next check retries', async () => {
@@ -310,14 +316,19 @@ describe('DeadlineWatcherService', () => {
       players,
       snapshots,
     });
-    proposalService.generateProposal.mockRejectedValueOnce(new Error('boom'));
+    proposalService.generateBestProposal.mockRejectedValueOnce(
+      new Error('boom'),
+    );
 
     await expect(service.checkDeadline()).rejects.toThrow('boom');
 
-    proposalService.generateProposal.mockResolvedValue(proposal);
+    proposalService.generateBestProposal.mockResolvedValue({
+      proposal,
+      candidates: [],
+    });
     await service.checkDeadline();
 
-    expect(proposalService.generateProposal).toHaveBeenCalledTimes(2);
+    expect(proposalService.generateBestProposal).toHaveBeenCalledTimes(2);
   });
 
   it('respects a configured deadlineLeadHours', async () => {
@@ -331,7 +342,7 @@ describe('DeadlineWatcherService', () => {
 
     await service.checkDeadline();
 
-    expect(proposalService.generateProposal).not.toHaveBeenCalled();
+    expect(proposalService.generateBestProposal).not.toHaveBeenCalled();
   });
 
   describe('lifecycle', () => {

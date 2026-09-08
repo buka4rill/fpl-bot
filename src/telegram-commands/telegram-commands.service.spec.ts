@@ -19,7 +19,10 @@ import { Position } from '../common/enums/position.enum';
 describe('TelegramCommandsService', () => {
   let service: TelegramCommandsService;
   let ingestionService: { getBootstrapSnapshot: jest.Mock };
-  let proposalService: { generateProposal: jest.Mock };
+  let proposalService: {
+    generateProposal: jest.Mock;
+    generateBestProposal: jest.Mock;
+  };
   let teamStateService: { reportTeamState: jest.Mock };
   let authService: {
     assertAuthenticated: jest.Mock;
@@ -75,6 +78,9 @@ describe('TelegramCommandsService', () => {
     };
     proposalService = {
       generateProposal: jest.fn().mockResolvedValue(proposal),
+      generateBestProposal: jest
+        .fn()
+        .mockResolvedValue({ proposal, candidates: [] }),
     };
     teamStateService = {
       reportTeamState: jest.fn().mockResolvedValue({
@@ -140,11 +146,12 @@ describe('TelegramCommandsService', () => {
 
       expect(authService.assertAuthenticated).toHaveBeenCalled();
       expect(teamStateService.reportTeamState).toHaveBeenCalledWith(4);
-      expect(proposalService.generateProposal).toHaveBeenCalledWith(2);
+      expect(proposalService.generateBestProposal).toHaveBeenCalledWith(2, []);
       expect(alertService.sendProposal).toHaveBeenCalledWith(
         proposal,
         players,
         snapshots,
+        [],
       );
     });
 
@@ -155,7 +162,7 @@ describe('TelegramCommandsService', () => {
 
       await service.handleCommand('/propose');
 
-      expect(proposalService.generateProposal).not.toHaveBeenCalled();
+      expect(proposalService.generateBestProposal).not.toHaveBeenCalled();
       expect(alertService.sendMessage).toHaveBeenCalledWith(
         expect.stringContaining('Not authenticated with FPL'),
       );
@@ -173,7 +180,7 @@ describe('TelegramCommandsService', () => {
       expect(alertService.sendMessage).toHaveBeenCalledWith(
         'No upcoming gameweek found to propose for.',
       );
-      expect(proposalService.generateProposal).not.toHaveBeenCalled();
+      expect(proposalService.generateBestProposal).not.toHaveBeenCalled();
     });
   });
 
