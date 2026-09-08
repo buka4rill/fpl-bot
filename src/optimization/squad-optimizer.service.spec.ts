@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { SquadOptimizerService } from './squad-optimizer.service';
 import { PredictionService } from '../prediction/prediction.service';
 import {
@@ -43,11 +44,30 @@ describe('SquadOptimizerService', () => {
     finished: false,
   };
 
+  // Defaults match configuration.ts's own defaults (maxHitsPerWeek=1,
+  // hitRiskPremium=4, i.e. an effective 8-pt threshold), so most tests read
+  // as "under the real deployed defaults" without passing overrides.
+  const buildConfig = (
+    overrides: Partial<{ maxHitsPerWeek: number; hitRiskPremium: number }> = {},
+  ): { get: jest.Mock } => ({
+    get: jest.fn((key: string) => {
+      if (key === 'optimizer.maxHitsPerWeek')
+        return overrides.maxHitsPerWeek ?? 1;
+      if (key === 'optimizer.hitRiskPremium')
+        return overrides.hitRiskPremium ?? 4;
+      return undefined;
+    }),
+  });
+
   const setup = async (
     players: Player[],
     predictions: PlayerSnapshot[],
     rules: SquadRules,
     currentSquad?: CurrentSquad,
+    configOverrides?: Partial<{
+      maxHitsPerWeek: number;
+      hitRiskPremium: number;
+    }>,
   ) => {
     predictionService = {
       predictGameweek: jest.fn().mockResolvedValue({
@@ -62,6 +82,7 @@ describe('SquadOptimizerService', () => {
       providers: [
         SquadOptimizerService,
         { provide: PredictionService, useValue: predictionService },
+        { provide: ConfigService, useValue: buildConfig(configOverrides) },
       ],
     }).compile();
     service = module.get<SquadOptimizerService>(SquadOptimizerService);
@@ -286,7 +307,33 @@ describe('SquadOptimizerService', () => {
       expect(result.hitCost).toBe(0);
     });
 
-    it('takes the hit when the upgrade is worth more than the transfer cost', async () => {
+    it('takes the hit when the upgrade clears the risk-adjusted threshold', async () => {
+      const candidates = [...players, player(14, Position.DEF, 114)];
+      const candidatePredictions = [
+        ...predictions,
+        // +10 over player 6's 4 pts — clearly above the default
+        // risk-adjusted threshold (POINTS_PER_TRANSFER_HIT + hitRiskPremium
+        // = 4 + 4 = 8), same price.
+        snapshot(14, 4, 14),
+      ];
+      await setup(candidates, candidatePredictions, toyRules, ownedSquad);
+
+      const result = await service.optimizeSquad(0); // no free transfers
+
+      expect(result.squad).toContain(14);
+      expect(result.squad).not.toContain(6);
+      expect(result.transfers).toEqual([{ playerOutId: 6, playerInId: 14 }]);
+      // The *reported*/deducted hit cost stays the real FPL rule (4/hit) —
+      // only the solver's internal willingness to recommend one is stricter.
+      expect(result.hitCost).toBe(4);
+    });
+
+    it('does NOT take a hit when the gain clears the bare 4-pt breakeven but not the risk-adjusted threshold', async () => {
+      // This is the regression case for the reported bug: a +6 gain used to
+      // trigger a hit under the old bare-breakeven (>4) rule, even though a
+      // single-point-of-failure swap for a marginal edge is a bad trade in
+      // a rank-relative mini-league. Under the default risk premium (+4,
+      // effective threshold 8), it should no longer be recommended.
       const candidates = [...players, player(14, Position.DEF, 114)];
       const candidatePredictions = [
         ...predictions,
@@ -296,10 +343,60 @@ describe('SquadOptimizerService', () => {
 
       const result = await service.optimizeSquad(0); // no free transfers
 
-      expect(result.squad).toContain(14);
-      expect(result.squad).not.toContain(6);
+      expect(result.squad).toContain(6);
+      expect(result.squad).not.toContain(14);
+      expect(result.transfers).toEqual([]);
+      expect(result.hitCost).toBe(0);
+    });
+
+    it('caps how many hits get stacked in one week, even when each is individually worth it', async () => {
+      // Two independently-profitable swaps (both clearing the 8-pt
+      // threshold on their own), but with different margins.
+      const candidates = [
+        ...players,
+        player(14, Position.DEF, 114),
+        player(15, Position.MID, 115),
+      ];
+      const candidatePredictions = [
+        ...predictions,
+        snapshot(14, 4, 16), // +12 over player 6's 4 pts, same price
+        snapshot(15, 5, 15), // +9 over player 9's 6 pts, same price
+      ];
+      await setup(candidates, candidatePredictions, toyRules, ownedSquad); // default maxHitsPerWeek=1
+
+      const result = await service.optimizeSquad(0); // no free transfers
+
+      // Only the higher-margin swap is taken — the cap makes the second
+      // one structurally impossible this week, not just less attractive.
       expect(result.transfers).toEqual([{ playerOutId: 6, playerInId: 14 }]);
       expect(result.hitCost).toBe(4);
+    });
+
+    it('allows more hits when maxHitsPerWeek is configured higher', async () => {
+      const candidates = [
+        ...players,
+        player(14, Position.DEF, 114),
+        player(15, Position.MID, 115),
+      ];
+      const candidatePredictions = [
+        ...predictions,
+        snapshot(14, 4, 16), // +12 over player 6's 4 pts, same price
+        snapshot(15, 5, 15), // +9 over player 9's 6 pts, same price
+      ];
+      await setup(candidates, candidatePredictions, toyRules, ownedSquad, {
+        maxHitsPerWeek: 2,
+      });
+
+      const result = await service.optimizeSquad(0); // no free transfers
+
+      expect(result.transfers).toEqual(
+        expect.arrayContaining([
+          { playerOutId: 6, playerInId: 14 },
+          { playerOutId: 9, playerInId: 15 },
+        ]),
+      );
+      expect(result.transfers).toHaveLength(2);
+      expect(result.hitCost).toBe(8);
     });
 
     it('takes multiple transfers at zero cost under Wildcard, even ones not individually worth a hit', async () => {

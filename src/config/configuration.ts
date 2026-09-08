@@ -10,6 +10,10 @@ export interface AppConfig {
   scheduler: {
     deadlineLeadHours: number;
   };
+  optimizer: {
+    maxHitsPerWeek: number;
+    hitRiskPremium: number;
+  };
   database: {
     host: string;
     port: number;
@@ -30,6 +34,10 @@ export default (): AppConfig => ({
   },
   scheduler: {
     deadlineLeadHours: Number(process.env.DEADLINE_LEAD_HOURS ?? 24),
+  },
+  optimizer: {
+    maxHitsPerWeek: Number(process.env.OPTIMIZER_MAX_HITS_PER_WEEK ?? 1),
+    hitRiskPremium: Number(process.env.OPTIMIZER_HIT_RISK_PREMIUM ?? 4),
   },
   database: {
     host: process.env.DATABASE_HOST ?? 'localhost',

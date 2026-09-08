@@ -13,6 +13,7 @@ import { AlertModule } from './alert/alert.module';
 import { ApprovalModule } from './approval/approval.module';
 import { ExecutionModule } from './execution/execution.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
+import { TeamStateModule } from './team-state/team-state.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { SchedulerModule } from './scheduler/scheduler.module';
     TrendsModule,
     PredictionModule,
     OptimizationModule,
+    TeamStateModule,
     ProposalModule,
     AlertModule,
     ApprovalModule,

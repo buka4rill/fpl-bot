@@ -129,3 +129,33 @@ export interface ExecutionLog {
   appliedAt: string;
   success: boolean;
 }
+
+// Singleton (one row per FPL team — this bot serves exactly one) holding
+// what the public API doesn't expose and the weekly Telegram prompt exists
+// to ask for directly instead: current free-transfer count and per-chip
+// availability. Since the 2025/26 rules change, all four chips are
+// guaranteed twice per season (see CLAUDE.md), so all 8 are tracked
+// separately — the "2" set only becomes askable from Gameweek 20, and the
+// "1" set stops being askable after the Gameweek 19 deadline regardless of
+// whether it was ever explicitly marked unavailable (TeamStateService's
+// step-sequencing, not a field here, enforces that gameweek gate).
+export interface TeamState {
+  teamId: number;
+  // Null until the very first weekly prompt has ever been answered.
+  freeTransfers: number | null;
+  // Which gameweek `freeTransfers` was last confirmed for — the freshness
+  // marker TeamStateService.isFreshFor checks against the upcoming gameweek.
+  freeTransfersAsOfGameweekId: number | null;
+  wildcard1Available: boolean;
+  freeHit1Available: boolean;
+  benchBoost1Available: boolean;
+  tripleCaptain1Available: boolean;
+  wildcard2Available: boolean;
+  freeHit2Available: boolean;
+  benchBoost2Available: boolean;
+  tripleCaptain2Available: boolean;
+  // One of TeamStateService's PromptStep keys, or null when no weekly
+  // prompt is currently in flight.
+  pendingPromptStep: string | null;
+  pendingPromptGameweekId: number | null;
+}

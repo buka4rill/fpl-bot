@@ -7,6 +7,7 @@ import { ApprovalStateMachine } from './approval.state-machine';
 import { ProposalModule } from '../proposal/proposal.module';
 import { ExecutionModule } from '../execution/execution.module';
 import { AlertModule } from '../alert/alert.module';
+import { TeamStateModule } from '../team-state/team-state.module';
 import { ApprovalEntity } from '../persistence/entities/approval.entity';
 
 @Module({
@@ -15,6 +16,7 @@ import { ApprovalEntity } from '../persistence/entities/approval.entity';
     ProposalModule,
     ExecutionModule,
     AlertModule,
+    TeamStateModule,
     HttpModule,
   ],
   controllers: [ApprovalController],

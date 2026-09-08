@@ -40,6 +40,17 @@ export class AlertService {
     await this.telegram.sendMessage(text);
   }
 
+  // Thin passthroughs so callers outside AlertModule (e.g. TeamStateService)
+  // never need TelegramAdapter injected directly — AlertModule only exports
+  // AlertService, keeping the Telegram bot instance encapsulated.
+  async sendMessage(text: string): Promise<void> {
+    await this.telegram.sendMessage(text);
+  }
+
+  async sendYesNoPrompt(question: string, callbackData: string): Promise<void> {
+    await this.telegram.sendYesNoPrompt(question, callbackData);
+  }
+
   private renderMessage(
     proposal: Proposal,
     players: Player[],

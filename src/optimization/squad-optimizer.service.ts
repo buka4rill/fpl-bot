@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import solver, { Model, SolveResult } from 'javascript-lp-solver';
 import { PredictionService } from '../prediction/prediction.service';
 import {
@@ -41,10 +42,14 @@ const positionKey = (position: Position): string => `pos_${position}`;
 const clubKey = (teamId: number): string => `club_${teamId}`;
 const EXCESS_TRANSFERS_KEY = 'excessTransfers';
 const TRANSFER_HITS_CONSTRAINT = 'transferHits';
+const MAX_HITS_CONSTRAINT = 'maxHits';
 
 @Injectable()
 export class SquadOptimizerService {
-  constructor(private readonly predictionService: PredictionService) {}
+  constructor(
+    private readonly predictionService: PredictionService,
+    private readonly config: ConfigService,
+  ) {}
 
   // `freeTransfers` can't be read from the public API (see CurrentSquad's
   // doc comment) — defaults to the standard weekly amount. Pass the real
@@ -78,12 +83,28 @@ export class SquadOptimizerService {
       ? rules.squadSize
       : freeTransfers;
 
+    // Both config-driven, not hardcoded like POINTS_PER_TRANSFER_HIT itself
+    // — these encode the owner's own risk tolerance (a mini-league is
+    // rank-relative, not raw-EV, so stacking several marginal, high-variance
+    // hits in one week is a bad trade even when each is individually
+    // "worth it" by a hair) rather than a fixed FPL game rule. Only steers
+    // the solver's internal decision-making — hitCost below stays the real
+    // 4-pt-per-hit rule regardless of these.
+    const maxHitsPerWeek = Number(
+      this.config.get<number>('optimizer.maxHitsPerWeek') ?? 1,
+    );
+    const hitRiskPremium = Number(
+      this.config.get<number>('optimizer.hitRiskPremium') ?? 4,
+    );
+
     const squad = this.selectSquad(
       players,
       predictions,
       rules,
       currentSquad,
       effectiveFreeTransfers,
+      maxHitsPerWeek,
+      hitRiskPremium,
     );
     const lineup = this.selectStartingLineup(
       squad,
@@ -109,17 +130,23 @@ export class SquadOptimizerService {
   // (you can in principle sell everyone) rather than a fresh £100m, and an
   // `excessTransfers` variable is added: it's constrained to be at least
   // (transfers used - freeTransfers) and penalized in the objective at
-  // POINTS_PER_TRANSFER_HIT per unit. Since the solver maximizes points, it
-  // settles `excessTransfers` at exactly max(0, transfersUsed -
-  // freeTransfers) — the standard LP encoding of a max(0, x) penalty — which
-  // means the solver only recommends a swap when the points gained are
-  // worth the hit, not just whenever a marginally-better player exists.
+  // (POINTS_PER_TRANSFER_HIT + hitRiskPremium) per unit — deliberately
+  // higher than the real 4-pt cost, so the solver only recommends a hit
+  // when the gain clearly clears breakeven, not just barely (see
+  // optimizeSquad's comment on why this is config-driven risk tolerance,
+  // not a hardcoded game rule). It's also capped at maxHitsPerWeek via
+  // MAX_HITS_CONSTRAINT, so even a string of individually-profitable hits
+  // can't stack past that in one week. Since the solver maximizes points,
+  // it settles `excessTransfers` at exactly
+  // min(maxHitsPerWeek, max(0, transfersUsed - freeTransfers)).
   private selectSquad(
     players: Player[],
     predictions: PlayerSnapshot[],
     rules: SquadRules,
     currentSquad: CurrentSquad | undefined,
     freeTransfers: number,
+    maxHitsPerWeek: number,
+    hitRiskPremium: number,
   ): number[] {
     const playerById = new Map(players.map((p) => [p.id, p]));
     const currentSquadIds = new Set(currentSquad?.playerIds ?? []);
@@ -160,9 +187,14 @@ export class SquadOptimizerService {
       constraints[TRANSFER_HITS_CONSTRAINT] = {
         min: currentSquad.playerIds.length - freeTransfers,
       };
+      // Inert under Wildcard/Free Hit: freeTransfers is already squadSize
+      // in that branch (see optimizeSquad), so excessTransfers wants to be
+      // 0 regardless of this cap — no need to special-case chips out of it.
+      constraints[MAX_HITS_CONSTRAINT] = { max: maxHitsPerWeek };
       variables[EXCESS_TRANSFERS_KEY] = {
-        points: -POINTS_PER_TRANSFER_HIT,
+        points: -(POINTS_PER_TRANSFER_HIT + hitRiskPremium),
         [TRANSFER_HITS_CONSTRAINT]: 1,
+        [MAX_HITS_CONSTRAINT]: 1,
       };
     }
 

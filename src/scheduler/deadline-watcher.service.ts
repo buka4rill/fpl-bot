@@ -9,6 +9,7 @@ import { IngestionService } from '../ingestion/ingestion.service';
 import { ProposalService } from '../proposal/proposal.service';
 import { AlertService } from '../alert/alert.service';
 import { ApprovalService } from '../approval/approval.service';
+import { TeamStateService } from '../team-state/team-state.service';
 
 // Polls hourly rather than daily (ARCHITECTURE.md's "coarse, e.g. daily"
 // suggestion) so the trigger window is never missed even with a small
@@ -36,6 +37,7 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
     private readonly proposalService: ProposalService,
     private readonly alertService: AlertService,
     private readonly approvalService: ApprovalService,
+    private readonly teamStateService: TeamStateService,
     private readonly config: ConfigService,
   ) {}
 
@@ -92,6 +94,20 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Block until this week's free-transfer/chip prompt is answered —
+    // never fall back to a stale/default free-transfer count. The warn
+    // logs on every poll while blocked (not just once at prompt-start), so
+    // a stuck state (e.g. TELEGRAM_BOT_TOKEN unset, which makes
+    // TelegramAdapter silently no-op) stays visible rather than going
+    // quiet after the first attempt.
+    if (!(await this.teamStateService.isFreshFor(targetGameweek.id))) {
+      this.logger.warn(
+        `Gameweek ${targetGameweek.id} proposal blocked: weekly free-transfer/chip prompt not yet answered.`,
+      );
+      await this.teamStateService.ensureWeeklyPromptStarted(targetGameweek.id);
+      return;
+    }
+
     // Claim synchronously, before any further await (see the field's
     // comment) — rolled back on failure so a transient error still gets
     // retried next poll rather than silently never alerting for this
@@ -104,7 +120,11 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `Generating proposal for gameweek ${targetGameweek.id} (deadline ${targetGameweek.deadlineAt})...`,
       );
-      const proposal = await this.proposalService.generateProposal();
+      const freeTransfers = await this.teamStateService.getFreeTransfers(
+        targetGameweek.id,
+      );
+      const proposal =
+        await this.proposalService.generateProposal(freeTransfers);
       await this.alertService.sendProposal(proposal, players, snapshots);
     } catch (error) {
       this.lastClaimedGameweekId = undefined;

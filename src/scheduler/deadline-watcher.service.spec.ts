@@ -5,6 +5,7 @@ import { IngestionService } from '../ingestion/ingestion.service';
 import { ProposalService } from '../proposal/proposal.service';
 import { AlertService } from '../alert/alert.service';
 import { ApprovalService } from '../approval/approval.service';
+import { TeamStateService } from '../team-state/team-state.service';
 import {
   Gameweek,
   Player,
@@ -23,6 +24,11 @@ describe('DeadlineWatcherService', () => {
   };
   let alertService: { sendProposal: jest.Mock };
   let approvalService: { expireOverdue: jest.Mock };
+  let teamStateService: {
+    isFreshFor: jest.Mock;
+    ensureWeeklyPromptStarted: jest.Mock;
+    getFreeTransfers: jest.Mock;
+  };
   let config: { get: jest.Mock };
 
   const players: Player[] = [
@@ -74,6 +80,13 @@ describe('DeadlineWatcherService', () => {
     };
     alertService = { sendProposal: jest.fn() };
     approvalService = { expireOverdue: jest.fn() };
+    // Fresh by default so every pre-existing test keeps exercising the same
+    // straight-through flow as before this gate was added.
+    teamStateService = {
+      isFreshFor: jest.fn().mockResolvedValue(true),
+      ensureWeeklyPromptStarted: jest.fn(),
+      getFreeTransfers: jest.fn().mockResolvedValue(1),
+    };
     config = { get: jest.fn().mockReturnValue(24) }; // deadlineLeadHours
 
     const module: TestingModule = await Test.createTestingModule({
@@ -83,6 +96,7 @@ describe('DeadlineWatcherService', () => {
         { provide: ProposalService, useValue: proposalService },
         { provide: AlertService, useValue: alertService },
         { provide: ApprovalService, useValue: approvalService },
+        { provide: TeamStateService, useValue: teamStateService },
         { provide: ConfigService, useValue: config },
       ],
     }).compile();
@@ -150,11 +164,40 @@ describe('DeadlineWatcherService', () => {
     await service.checkDeadline();
 
     expect(proposalService.generateProposal).toHaveBeenCalledTimes(1);
+    expect(proposalService.generateProposal).toHaveBeenCalledWith(1);
     expect(alertService.sendProposal).toHaveBeenCalledWith(
       proposal,
       players,
       snapshots,
     );
+  });
+
+  it('blocks proposal generation until the weekly free-transfer/chip prompt is answered', async () => {
+    teamStateService.isFreshFor.mockResolvedValue(false);
+    ingestionService.getBootstrapSnapshot.mockResolvedValue({
+      gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
+      players,
+      snapshots,
+    });
+
+    await service.checkDeadline();
+
+    expect(teamStateService.ensureWeeklyPromptStarted).toHaveBeenCalledWith(4);
+    expect(proposalService.generateProposal).not.toHaveBeenCalled();
+    expect(alertService.sendProposal).not.toHaveBeenCalled();
+  });
+
+  it('passes the confirmed free-transfer count into proposal generation once fresh', async () => {
+    teamStateService.getFreeTransfers.mockResolvedValue(3);
+    ingestionService.getBootstrapSnapshot.mockResolvedValue({
+      gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
+      players,
+      snapshots,
+    });
+
+    await service.checkDeadline();
+
+    expect(proposalService.generateProposal).toHaveBeenCalledWith(3);
   });
 
   it('does not re-propose a gameweek already persisted before a restart', async () => {

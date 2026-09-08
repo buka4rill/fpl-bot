@@ -38,10 +38,11 @@ file is the short version for whichever session picks this repo up next.
 | `ingestion` | implemented — bootstrap-static, fixtures, element-summary, live-gameweek, current-squad |
 | `trends` | scaffolded — curated source whitelist, not consumed yet |
 | `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder |
-| `optimization` | implemented — squad optimizer (ILP) + chip evaluator |
+| `optimization` | implemented — squad optimizer (ILP) + chip evaluator. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
+| `team-state` | implemented (2026-09-08) — weekly Telegram prompt for current free transfers + all 8 chip-availability flags; `DeadlineWatcherService` blocks proposal generation until each week's is answered — see "Weekly free-transfer/chip prompt" below |
 | `proposal` | implemented — optimizer-driven, plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing) and `POST /proposal/chip` (declare a chip for this week's proposal — see "Execution auth" below) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
-| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller; triggers execution on `APPROVED` |
+| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller; also routes the weekly chip/free-transfer prompt's replies (same single webhook — see "Weekly free-transfer/chip prompt" below); triggers execution on `APPROVED` |
 | `execution` | implemented for **lineup/captain/transfers/chips** — `FplAuthClient` (OAuth refresh-token flow, see below) + `ExecutionService`. Transfers/chip contract is unverified against the live API — see below |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday) |
 | persistence | implemented — Postgres + TypeORM, see "Persistence" below |
@@ -125,6 +126,48 @@ For local webhook testing (tapping Approve/Reject against a real Telegram
 callback), `pnpm run dev:webhook` automates the tunnel + webhook wiring —
 see `scripts/dev-webhook.ts`.
 
+## Transfer-hit policy (2026-09-08)
+
+The ILP's real hit cost (`POINTS_PER_TRANSFER_HIT = 4` in
+`squad-optimizer.service.ts`) is a bare FPL breakeven — the solver used to recommend a hit
+any time predicted gain was a hair above 4, with no cap on how many it
+stacked in one week. A real proposal once took 6 hits (-24 pts) chasing
+marginal, individually-thin edges — a bad trade in a mini-league (rank-
+relative, variance-punishing), even when each swap is technically EV-
+positive by a sliver. Fixed with two config-driven (not hardcoded — this is
+risk tolerance, not a fixed game rule) levers in `SquadOptimizerService`:
+`OPTIMIZER_MAX_HITS_PER_WEEK` (default 1) hard-caps hits per week via an
+ILP constraint (`MAX_HITS_CONSTRAINT`), and `OPTIMIZER_HIT_RISK_PREMIUM`
+(default 4) is added to the *internal* objective penalty only — the
+solver's effective threshold becomes 8, not 4 — while the real, reported
+`hitCost` shown to the user and actually deducted by FPL stays exactly
+`4 × hits taken`. Both inert under Wildcard/Free Hit (transfers are already
+free that week). See the regression tests in
+`squad-optimizer.service.spec.ts` for the exact before/after behavior.
+
+## Weekly free-transfer/chip prompt (2026-09-08)
+
+Built the companion feature described below (no longer just planned):
+`TeamStateModule` (`TeamStateEntity`, one singleton row keyed by
+`fpl.teamId`) persists current free transfers and all 8 chip-availability
+flags. `DeadlineWatcherService.checkDeadline()` now blocks — does not
+generate/alert a proposal — until `TeamStateService.isFreshFor(gameweekId)`
+is true; if stale, it kicks off (or no-ops if already in flight) the
+Telegram prompt sequence: "how many free transfers?" (plain text reply, 0–5)
+then one Yes/No button per applicable chip. Chip step order per gameweek:
+the first-half set (`wildcard1`/`freeHit1`/`benchBoost1`/`tripleCaptain1`)
+is only asked through the Gameweek 19 deadline (never after, regardless of
+its `*Available` flag — it doesn't carry over); the second-half set only
+from Gameweek 20 on. A chip answered "no" (no longer available) stops being
+asked. Replies land on the *same* existing Telegram webhook
+(`POST /approval/telegram-callback`, deliberately not a new route — see
+`ApprovalController`) since Telegram only supports one webhook URL;
+`chipavail:<gameweekId>:<step>:yes|no` callback data encodes the gameweek
+so a stale button from a prior week's still-open prompt can't get
+misapplied. `AlertModule` stays encapsulated — `TeamStateService` goes
+through `AlertService`'s `sendMessage`/`sendYesNoPrompt` passthroughs
+rather than getting `TelegramAdapter` injected directly.
+
 ## TODO: deploy off the local machine + quick tunnel (not started)
 
 Raised 2026-09-07: `dev:webhook`'s Cloudflare *quick* tunnel
@@ -161,11 +204,12 @@ deploy config exists yet.
    real live test the next time a transfer/chip is actually played
 5. ⬜ Iterate the prediction model once there's backtestable history
 
-Currently at: **step 4 done** (pending its own live verification), on top
-of persistence. Next: step 5 needs a few gameweeks of `PlayerSnapshot`
-history to accumulate first; the weekly chip/transfer prompt and
-post-deadline check-in (below) are both unblocked and ready to pick up
-whenever.
+Currently at: **step 4 done** (pending its own live verification), plus the
+weekly free-transfer/chip prompt and the transfer-hit policy fix (both
+2026-09-08, see above) on top of persistence. Next: step 5 needs a few
+gameweeks of `PlayerSnapshot` history to accumulate first; the
+post-deadline "did you apply it?" check-in (below) is unblocked and ready
+to pick up whenever.
 
 ## Open question: keep auto-execution, or go notification-only? (deferred, not decided)
 
@@ -192,24 +236,11 @@ since the public API doesn't expose free-transfer count or unplayed chips
 regardless of which way this decision goes. See the weekly prompt feature
 below — it's decoupled from this open question and not blocked by it.
 
-Companion feature, unblocked and independent of the decision above:
-
-- **Ask the user for current free transfers and available chips before each
-  week's proposal**, instead of an authenticated lookup — `CurrentSquad`'s
-  doc comment in `domain.types.ts` already notes free transfers aren't
-  exposed by the public API, and available (unplayed) chips have the same
-  gap. A weekly Telegram prompt (right before deadline, alongside the
-  proposal alert) sidesteps needing auth for this entirely: "how many free
-  transfers?", then one yes/no per chip. **Since the 2025/26 rules change,
-  all four chips — Wildcard, Free Hit, Bench Boost, Triple Captain — are
-  guaranteed twice per season, not just Wildcard**: one set for the first
-  half (must be played before the Gameweek 19 deadline, doesn't carry over)
-  and a fresh second set unlocked from Gameweek 20. So track all eight as
-  separate flags (`wildcard1`/`wildcard2`, `freeHit1`/`freeHit2`, etc.), not
-  four. Any chip answered "no" isn't asked again. Needs a handful of
-  persisted fields (current free transfers, per-chip used/available) — the
-  persistence layer this needed to survive restarts is now in place (see
-  below), so this is unblocked and ready to build whenever it's picked up.
+Companion feature, independent of the decision above — **built 2026-09-08**,
+see "Weekly free-transfer/chip prompt" above for the implementation. It asks
+for current free transfers and available chips before each week's proposal
+(the public API exposes neither), and now actually **blocks** proposal
+generation until answered, rather than just informing it.
 
 Companion feature, unblocked now that persistence has landed (see below):
 

@@ -42,4 +42,24 @@ export class TelegramAdapter {
       parse_mode: 'Markdown',
     });
   }
+
+  // Yes/No buttons carry caller-supplied callback data (e.g. the weekly
+  // chip-availability prompt's `chipavail:<gameweekId>:<step>`), delivered
+  // to ApprovalController's webhook on tap same as approve/reject.
+  async sendYesNoPrompt(question: string, callbackData: string): Promise<void> {
+    if (!this.bot) {
+      this.logger.warn('TELEGRAM_BOT_TOKEN not configured — skipping send.');
+      return;
+    }
+
+    const keyboard = Markup.inlineKeyboard([
+      Markup.button.callback('Yes', `${callbackData}:yes`),
+      Markup.button.callback('No', `${callbackData}:no`),
+    ]);
+
+    await this.bot.telegram.sendMessage(this.chatId, question, {
+      parse_mode: 'Markdown',
+      ...keyboard,
+    });
+  }
 }
