@@ -57,17 +57,40 @@ The app listens on `http://localhost:3000` (override with `PORT`).
 ## FPL account setup
 
 - `FPL_TEAM_ID` — your team id, found in the URL when viewing your team on
-  the FPL site (`.../entry/<id>/...`).
+  the FPL site (`.../entry/<id>/...`), or from a `GET /api/my-team/<id>/`
+  request in DevTools' Network tab while logged in.
 - `FPL_REFRESH_TOKEN` — FPL's write auth is OIDC with a bot-guarded login
-  step, so there's no scripted login. Capture it manually from a logged-in
-  browser session on fantasy.premierleague.com, in DevTools console:
+  step, so there's no scripted login. Two ways to get this:
+
+  **Recommended: `pnpm run auth:login`** (with the app already running —
+  see [Auth: capturing/refreshing the token](#auth-capturingrefreshing-the-token)
+  below). Opens a real browser, you log in normally, it pushes the token to
+  the app automatically. Needs `AUTH_PUSH_SECRET` set first (see below).
+
+  **Manual fallback**: capture it yourself from a logged-in browser session
+  on fantasy.premierleague.com, in DevTools console:
 
   ```js
   JSON.parse(localStorage.getItem('oidc.user:https://account.premierleague.com/as:bfcbaf69-aade-4c1b-8f00-c1cb8a193030')).refresh_token
   ```
 
-  This token goes stale routinely — see `CLAUDE.md`'s "Execution auth"
-  section before touching anything execution-related.
+  Paste the result into `.env` as `FPL_REFRESH_TOKEN` directly.
+
+  Either way, this token goes stale routinely (FPL allows only one active
+  session per account — logging into the official app elsewhere invalidates
+  it) — see `CLAUDE.md`'s "Execution auth" section for the full story.
+
+- `AUTH_PUSH_SECRET` — required for `pnpm run auth:login` to work; guards
+  `POST /auth/token` (see below) since it's a public route once deployed.
+  Generate one and put the same value in `.env`:
+
+  ```bash
+  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  ```
+
+- `AUTH_TARGET_URL` — where `auth:login` pushes the captured token.
+  Defaults to `http://localhost:3000`; only change this if you're pointing
+  the script at a deployed instance instead of your local one.
 
 ## Database / migrations
 
@@ -129,17 +152,73 @@ pnpm test:cov
 
 ## Exercising the app locally
 
-- `pnpm run propose:captain-swap` — hits
-  `POST /proposal/captain-swap` on a running app: a low-risk manual
-  proposal (captain/vice-captain swap only, no transfers) that still goes
-  through the same Telegram approve/reject flow as a real optimizer
-  proposal. Needs `FPL_TEAM_ID`/`FPL_REFRESH_TOKEN` configured.
+Manual trigger endpoints — all `POST`, all needing `FPL_TEAM_ID`/
+`FPL_REFRESH_TOKEN` configured and the app running (`pnpm start` or
+`pnpm start:dev`). Each sends its result as a normal Telegram message
+through the same alert/approval flow a real automatic run would use.
+
+| Endpoint | What it does |
+|---|---|
+| `POST /team-state/report` | Sends the free-transfers/chip-availability report for the upcoming gameweek right now, instead of waiting for the weekly automatic check. |
+| `POST /proposal/generate` | Runs the real optimizer-driven flow (live team state → `SquadOptimizerService` → Telegram proposal) on demand. |
+| `POST /proposal/captain-swap` | Low-risk manual proposal: swaps captain ↔ vice-captain on your current squad only, no transfers. Good for testing the approve → execute path without risking a real transfer. Shortcut: `pnpm run propose:captain-swap`. |
+| `POST /proposal/manual-transfer` | Proposes exactly one transfer — body `{"playerOutId": <element id>, "playerInId": <element id>}`. Built from live `/api/my-team/` data, so it works even for a brand-new account with no gameweek history yet (unlike `/proposal/generate`, which needs the public entry/picks endpoint to have something to read). |
+| `POST /proposal/chip` | Declares a chip for this week's proposal — body `{"chip": "wildcard" \| "freehit" \| "bboost" \| "3xc", "freeTransfers"?: number}`. Runs the full optimizer with that chip factored in. |
+
+Example:
+
+```bash
+curl -X POST http://localhost:3000/proposal/manual-transfer \
+  -H "Content-Type: application/json" \
+  -d '{"playerOutId": 277, "playerInId": 175}'
+```
+
+### Webhook / push endpoints
+
+These aren't triggered by you directly — something external calls them.
+Both need your local server reachable from outside for real end-to-end
+testing (a tunnel, or a real deploy); calling them from `curl` on
+`localhost` still exercises the handler logic, just not the "external
+caller can actually reach it" part.
+
+| Endpoint | Called by | Purpose |
+|---|---|---|
+| `POST /approval/telegram-callback` | Telegram, when you tap Approve/Reject on a proposal alert | The only Telegram webhook this app registers (Telegram supports exactly one webhook URL per bot). Routes `approve:<id>`/`reject:<id>` callback data to `ApprovalService`. Use `pnpm run dev:webhook` (below) to point Telegram at your local server for testing. |
+| `POST /auth/token` | `scripts/auth-login.ts` (`pnpm run auth:login`), after you log into FPL in the browser it opens | Applies a freshly-captured `FPL_REFRESH_TOKEN` to the running app. Guarded by `AUTH_PUSH_SECRET` — send it as `Authorization: Bearer <secret>`. Body: `{"refreshToken": "<token>"}`. Fails closed (rejects everything) if `AUTH_PUSH_SECRET` isn't set. |
+
 - `pnpm run dev:webhook` — starts the app plus a Cloudflare quick tunnel
   and points the Telegram bot's webhook at it, so tapping Approve/Reject
   on a real Telegram message actually reaches your local server. Ctrl+C
   clears the webhook and stops both processes. This is dev-only — quick
   tunnels are unreliable by design (see `CLAUDE.md`'s deploy TODO); if it
   fails to register a few times in a row, that's the tunnel, not the app.
+
+### Auth: capturing/refreshing the token
+
+First time only, download the browser Playwright drives (a few hundred MB):
+
+```bash
+pnpm exec playwright install chromium
+```
+
+Then, whenever you need a fresh token:
+
+```bash
+pnpm run auth:login
+```
+
+Run this **from your own terminal**, not through an automation/agent shell
+— it opens a real, visible browser window, which needs an actual desktop
+session to render into. Log into FPL normally in the window that opens;
+once it detects the login it closes automatically and pushes the token to
+`POST /auth/token` above. You should get a "✅ FPL login updated" Telegram
+message when it works. Needs `AUTH_PUSH_SECRET` set (see
+[FPL account setup](#fpl-account-setup)) and the app already running.
+
+If the refresh token goes stale while the app is running unattended (no
+one at a terminal to run the above), it'll tell you: `DeadlineWatcherService`
+checks login state before generating a proposal and sends a Telegram
+message asking you to run `auth:login` rather than failing silently.
 
 ## Notes
 
