@@ -39,7 +39,7 @@ file is the short version for whichever session picks this repo up next.
 | `trends` | scaffolded — curated source whitelist, not consumed yet |
 | `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder |
 | `optimization` | implemented — squad optimizer (ILP) + chip evaluator. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
-| `team-state` | implemented (2026-09-08) — weekly Telegram prompt for current free transfers + all 8 chip-availability flags; `DeadlineWatcherService` blocks proposal generation until each week's is answered — see "Weekly free-transfer/chip prompt" below |
+| `team-state` | implemented (2026-09-08) — weekly Telegram prompt for current free transfers + all 8 chip-availability flags; `DeadlineWatcherService` blocks proposal generation until each week's is answered; `POST /team-state/prompt` manually (re)triggers it for testing — see "Weekly free-transfer/chip prompt" below |
 | `proposal` | implemented — optimizer-driven, plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing) and `POST /proposal/chip` (declare a chip for this week's proposal — see "Execution auth" below) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
 | `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller; also routes the weekly chip/free-transfer prompt's replies (same single webhook — see "Weekly free-transfer/chip prompt" below); triggers execution on `APPROVED` |
@@ -167,6 +167,12 @@ so a stale button from a prior week's still-open prompt can't get
 misapplied. `AlertModule` stays encapsulated — `TeamStateService` goes
 through `AlertService`'s `sendMessage`/`sendYesNoPrompt` passthroughs
 rather than getting `TelegramAdapter` injected directly.
+
+For testing without waiting on the automatic trigger window, `POST
+/team-state/prompt` (`TeamStateController`) fires the prompt for the
+upcoming gameweek on demand — same idea as `POST /proposal/captain-swap`.
+If that week's prompt was already fully answered, it deliberately restarts
+the sequence rather than no-op'ing, so you can re-confirm on demand.
 
 ## TODO: deploy off the local machine + quick tunnel (not started)
 
