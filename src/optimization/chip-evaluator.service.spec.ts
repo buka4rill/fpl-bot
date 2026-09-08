@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { ChipEvaluatorService } from './chip-evaluator.service';
 import { PredictionService } from '../prediction/prediction.service';
 import {
@@ -12,6 +13,7 @@ describe('ChipEvaluatorService', () => {
   let service: ChipEvaluatorService;
   let predictionService: { predictGameweek: jest.Mock };
   let squadOptimizerService: { evaluateStrategy: jest.Mock };
+  let config: { get: jest.Mock };
 
   const targetGameweek: Gameweek = {
     id: 4,
@@ -90,12 +92,15 @@ describe('ChipEvaluatorService', () => {
       // (computed by ChipEvaluatorService itself) should differ.
       evaluateStrategy: jest.fn().mockReturnValue(baseOptimization),
     };
+    // Matches configuration.ts's own default (OPTIMIZER_CHIP_RISK_PREMIUM=8).
+    config = { get: jest.fn().mockReturnValue(8) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ChipEvaluatorService,
         { provide: PredictionService, useValue: predictionService },
         { provide: SquadOptimizerService, useValue: squadOptimizerService },
+        { provide: ConfigService, useValue: config },
       ],
     }).compile();
 
@@ -150,13 +155,68 @@ describe('ChipEvaluatorService', () => {
     expect(noChip.netExpectedPoints).toBe(56); // 60 - 4
   });
 
-  it('picks the highest-scoring candidate as best', async () => {
+  it('picks the highest-scoring candidate as best, after the risk premium', async () => {
     const { best } = await service.evaluateBestStrategy();
 
-    // Triple Captain (70) beats Bench Boost (68) here — confirms best is
-    // the true max across all candidates, not just "first above no chip".
+    // Bench Boost (68) ties "no chip" (60) once the 8-pt premium is
+    // subtracted (68-8=60) and so doesn't win the tie; Triple Captain
+    // (70-8=62) clears it and wins outright — confirms best reflects the
+    // risk-adjusted decision, not raw netExpectedPoints.
     expect(best.chip).toBe(FplChip.TRIPLE_CAPTAIN);
-    expect(best.netExpectedPoints).toBe(70);
+    expect(best.netExpectedPoints).toBe(70); // unadjusted — the real total
+  });
+
+  it('does not recommend a chip for a marginal bonus that only ties the risk premium', async () => {
+    // Bench Boost's bonus here (2+3+2+1=8) exactly matches the default
+    // chipRiskPremium (8) — decisionScore ties "no chip" exactly (60=60),
+    // and a tie must not burn a scarce chip for zero net benefit.
+    const { best } = await service.evaluateBestStrategy(undefined, [
+      FplChip.BENCH_BOOST,
+    ]);
+
+    expect(best.chip).toBeUndefined();
+  });
+
+  it('recommends a chip once its bonus clearly clears the risk premium', async () => {
+    predictionService.predictGameweek.mockResolvedValue({
+      players: [],
+      rules: {} as never,
+      targetGameweek,
+      predictions: [
+        ...predictions,
+        {
+          gameweekId: 4,
+          playerId: 16,
+          price: 4,
+          ownershipPct: 0,
+          predictedPoints: 20, // big bench score, well past the premium
+        },
+      ],
+    });
+    squadOptimizerService.evaluateStrategy.mockReturnValue({
+      ...baseOptimization,
+      benchOutfieldIds: [13, 14, 15, 16],
+    });
+
+    const { best } = await service.evaluateBestStrategy(undefined, [
+      FplChip.BENCH_BOOST,
+    ]);
+
+    // netExpectedPoints = 50 (XI) + 10 (captain doubling) + 28 (bench:
+    // 2+3+2+1+20) = 88; decisionScore = 88-8=80, well past "no chip"'s 60.
+    expect(best.chip).toBe(FplChip.BENCH_BOOST);
+    expect(best.netExpectedPoints).toBe(88); // unadjusted — the real total
+  });
+
+  it('uses a custom chipRiskPremium from config', async () => {
+    config.get.mockReturnValue(0); // no premium at all
+
+    const { best } = await service.evaluateBestStrategy(undefined, [
+      FplChip.BENCH_BOOST,
+    ]);
+
+    // With no premium, Bench Boost's real +8 bonus is enough to win outright.
+    expect(best.chip).toBe(FplChip.BENCH_BOOST);
   });
 
   it('defaults to the chip-free candidate when nothing beats it (no benefit / tie)', async () => {

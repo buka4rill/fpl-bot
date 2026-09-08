@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PredictionService } from '../prediction/prediction.service';
 import {
   SquadOptimizationResult,
@@ -22,6 +23,7 @@ export class ChipEvaluatorService {
   constructor(
     private readonly predictionService: PredictionService,
     private readonly squadOptimizerService: SquadOptimizerService,
+    private readonly config: ConfigService,
   ) {}
 
   // Compares "no chip" against every chip FPL currently reports as
@@ -60,11 +62,33 @@ export class ChipEvaluatorService {
       };
     });
 
-    // "No chip" is first — on a tie (or no benefit from any chip), the
-    // reduce below only replaces on a strictly greater value, so it wins
-    // by default rather than burning a chip for zero gain.
+    // A chip's netExpectedPoints bonus (Bench Boost's bench points, Triple
+    // Captain's extra multiplier) is essentially always >= 0 with nothing
+    // else in the model pricing what it costs to spend a chip that's only
+    // available once or twice a season — left unchecked, any available
+    // chip would structurally "win" almost every single week (confirmed
+    // live 2026-09-08). chipRiskPremium (config-driven, same "risk
+    // tolerance, not a fixed game rule" pattern as
+    // OPTIMIZER_HIT_RISK_PREMIUM) is subtracted only from the internal
+    // decision score, not from the netExpectedPoints reported/stored on
+    // the candidate — a chip must clear a real bar to be picked, but what
+    // gets shown to the user (and stored as the proposal's expectedGain)
+    // stays the honest, real expected total either way. Not true hold-value
+    // modeling (that needs multi-gameweek prediction, still not built) —
+    // just a blunt "don't recommend a chip for a marginal gain" guardrail.
+    const chipRiskPremium = Number(
+      this.config.get<number>('optimizer.chipRiskPremium') ?? 8,
+    );
+    const decisionScore = (candidate: ChipCandidate): number =>
+      candidate.chip === undefined
+        ? candidate.netExpectedPoints
+        : candidate.netExpectedPoints - chipRiskPremium;
+
+    // "No chip" is first — on a tie (or no benefit clearing the premium),
+    // the reduce below only replaces on a strictly greater value, so it
+    // wins by default rather than burning a chip for a marginal gain.
     const best = candidates.reduce((a, b) =>
-      b.netExpectedPoints > a.netExpectedPoints ? b : a,
+      decisionScore(b) > decisionScore(a) ? b : a,
     );
     return { best, candidates };
   }

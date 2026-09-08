@@ -21,6 +21,7 @@ export interface AppConfig {
   optimizer: {
     maxHitsPerWeek: number;
     hitRiskPremium: number;
+    chipRiskPremium: number;
   };
   database: {
     // Set in production (e.g. `fly postgres attach` injects this) — takes
@@ -54,6 +55,7 @@ export default (): AppConfig => ({
   optimizer: {
     maxHitsPerWeek: Number(process.env.OPTIMIZER_MAX_HITS_PER_WEEK ?? 1),
     hitRiskPremium: Number(process.env.OPTIMIZER_HIT_RISK_PREMIUM ?? 4),
+    chipRiskPremium: Number(process.env.OPTIMIZER_CHIP_RISK_PREMIUM ?? 8),
   },
   database: {
     url: process.env.DATABASE_URL || undefined,

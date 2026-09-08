@@ -493,6 +493,30 @@ still backs the explicit-chip manual paths (`/proposal/chip`, `/chip`).
 The Telegram alert shows a `📊 Considered: ...` line (all candidates +
 their net expected points) whenever more than one was actually compared.
 
+**Real flaw found and fixed same day, live: chips were getting
+recommended on almost every proposal.** The owner noticed this
+immediately after the feature shipped. Root cause: Bench Boost's
+`netExpectedPoints` = *(no chip)* + (sum of bench players' predicted
+points), and Triple Captain's = *(no chip)* + (captain's predicted points,
+once more) — both bonus terms are essentially always ≥ 0, and nothing in
+the model priced in that a chip is a scarce, once-or-twice-a-season
+resource. So any available chip would structurally beat "no chip" almost
+every week, exactly the "hold value not modeled" gap already flagged as
+deferred scope — underestimated how visibly it would actually manifest
+(constant recommendations, not just suboptimal timing). Fixed with a
+`chipRiskPremium` (config-driven, `OPTIMIZER_CHIP_RISK_PREMIUM`, default
+8 — same "internal decision threshold, not a real game rule" pattern as
+`OPTIMIZER_HIT_RISK_PREMIUM`): subtracted only from the internal decision
+score used to pick `best`, never from the `netExpectedPoints` actually
+reported/stored as the proposal's `expectedGain` — a chip now has to
+clearly clear a real bar, not just any positive number, to get
+recommended. Explicitly **not** true hold-value modeling (that still
+needs the multi-gameweek prediction work below) — just a blunt guardrail
+against the worst symptom. See the regression tests in
+`chip-evaluator.service.spec.ts` (`'does not recommend a chip for a
+marginal bonus that only ties the risk premium'` and the companion test
+confirming a bonus that clearly exceeds it still wins).
+
 **Still not started — the genuinely hard part**: timing/hold value
 (comparing this week's Wildcard against holding for a better week) and
 `TrendsModule` integration. Investigated live while scoping the above:
