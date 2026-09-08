@@ -273,6 +273,15 @@ old "lineup/captain changes" phrasing only when there's genuinely nothing
 else to report (still accurate then, since `setLineup` runs on every
 execution regardless).
 
+**Both message fixes re-verified live, same day**: owner cancelled the
+first Bench Boost via the FPL web app, then re-ran the full
+`/proposal/chip-manual` → Telegram approve → execute cycle end to end.
+Confirmed both fixes actually landed as intended — the alert showed `🃏
+Chip: Bench Boost` up front this time, and the confirmation read `✅ GW4
+applied — Bench Boost now live...` instead of the old misleading text.
+Bench Boost itself re-confirmed `active` again both via the execution log
+and an independent fresh `/team-state/report` call.
+
 **Correction 2026-09-08 — not blocked on "preseason" the way it looked.**
 A live `POST /team-state/report` against the disposable test account
 (currently `gameweekId: 4`) came back with `bboost`/`3xc` both already
