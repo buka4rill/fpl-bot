@@ -38,6 +38,7 @@ flowchart TB
         APPROVAL["ApprovalModule"]
         EXEC["ExecutionModule"]
         AUTH["AuthModule<br/>(holds the FPL session)"]
+        RESULTS["ResultsModule<br/>(post-gameweek report, own poll)"]
         DB[("Postgres<br/>gameweeks, predictions,<br/>proposals, approvals, audit log")]
     end
 
@@ -68,6 +69,10 @@ flowchart TB
     AUTH --> FPLAUTH
     EXEC --> DB
     LOCALLOGIN -->|POST /auth/token| AUTH
+    INGEST --> RESULTS
+    PROPOSAL --> RESULTS
+    RESULTS --> ALERT
+    RESULTS --> DB
 ```
 
 ---
@@ -84,9 +89,10 @@ flowchart TB
 | **TeamStateModule** | Not in the original design — added 2026-09-08, reworked same day. Reads current free transfers and chip availability live from FPL (`GET /api/my-team/{teamId}/`, via `ExecutionModule` — see §4 — never `FplAuthClient` directly, keeping the isolation rule below intact) and sends it as an informational report through `AlertModule` before each week's proposal; the free-transfer count feeds into `OptimizationModule`. An earlier version asked you these questions over Telegram instead, on the assumption the data wasn't otherwise available — that assumption turned out wrong. See `CLAUDE.md`'s "Weekly team-status report". |
 | **ProposalModule** | Packages the optimizer's output into a `Proposal` record: recommended changes, expected point delta, reasoning summary, and a hit cost if applicable. Persisted with status `PENDING`. |
 | **AlertModule** | Renders the proposal into a human-readable message and sends it through your chosen channel, with an explicit approve/reject/edit action. |
-| **ApprovalModule** | Owns the state machine: `PENDING → APPROVED / REJECTED / EXPIRED`. Only a signed, verifiable response from you moves it out of `PENDING`. If deadline passes with no response, it auto-expires — **the fallback on silence is always "do nothing,"** never "apply anyway." |
+| **ApprovalModule** | Owns the state machine: `PENDING → APPROVED / REJECTED / EXPIRED`. Only a signed, verifiable response from you moves it out of `PENDING`. If deadline passes with no response, it auto-expires — **the fallback on silence is always "do nothing,"** never "apply anyway." Also, not in the original design — added 2026-09-08: the moment a proposal expires, it sends a one-time Telegram Yes/No check-in ("Did you apply my suggestion?") purely to label the real-world outcome for future backtesting; never gates or re-triggers execution. See CLAUDE.md's "Post-deadline applied-manually check-in". |
 | **ExecutionModule** | Triggered exclusively by an `APPROVED` proposal, re-validates the deadline hasn't passed, applies the change, and writes a full audit record (payload sent, response received, timestamp). Uses `FplAuthClient` from `AuthModule` (below) — the one other module allowed to hold the authenticated session directly. |
 | **AuthModule** | Not in the original design — added 2026-09-08. Now the *only* module holding `FplAuthClient`/the authenticated session (moved out of `ExecutionModule` so auth concerns — "are we logged in, how do we get logged in" — are separate from execution concerns — "given a session, apply this proposal"). `AuthService.isAuthenticated()`/`assertAuthenticated()` are the narrow surface everything else uses. `POST /auth/token` (shared-secret guarded) lets `scripts/auth-login.ts`'s Playwright-assisted local login push a freshly-captured token into a running instance — see CLAUDE.md's "Execution auth". |
+| **ResultsModule** | Not in the original design — added 2026-09-08. Runs its own hourly poll, independent of `SchedulerModule` and entirely public-API driven (no authenticated call needed), and — once a proposal's gameweek is marked `finished` — sends a predicted-vs-actual points comparison for *every* terminal proposal (`APPROVED`/`REJECTED`/`EXPIRED`, not only the ones that went unanswered). "Predicted" is a full FPL-accurate simulation (formation-aware autosubs, captaincy transfer to the vice-captain, each chip's scoring effect), not an approximation. Deliberately a separate trigger from `ApprovalModule`'s post-deadline check-in below — that one fires at the deadline, days before a gameweek's matches are even played, so it can never itself carry a score. See CLAUDE.md's "Post-gameweek results report". |
 
 ---
 
@@ -97,15 +103,15 @@ flowchart TB
 | `GET /api/bootstrap-static/` | Public | Players, teams, gameweek metadata, **deadline times**, price/ownership snapshot |
 | `GET /api/fixtures/?event={gw}` | Public | Fixture list & difficulty for a gameweek |
 | `GET /api/element-summary/{id}/` | Public | Per-player fixture history and upcoming fixtures |
-| `GET /api/event/{gw}/live/` | Public | Live per-player stats once a gameweek is underway (for post-hoc model evaluation) |
-| `GET /api/entry/{teamId}/` , `/history/`, `/event/{gw}/picks/` | Public | Your own team's current state and history |
+| `GET /api/event/{gw}/live/` | Public | Live per-player stats once a gameweek is underway — normalized 2026-09-08 (`IngestionService.getGameweekPlayerStats`, `{totalPoints, minutes, played}` per player) once `ResultsModule` became the first real consumer, for the autosub/scoring simulation behind the post-gameweek report |
+| `GET /api/entry/{teamId}/` , `/history/`, `/event/{gw}/picks/` | Public | Your own team's current state and history; `entry_history.points` (added to the typed shape 2026-09-08) is the actual points scored a given gameweek, used by `ResultsModule` as the "what really happened" side of its comparison |
 | External xG/xA source (e.g. Understat) | Public, unofficial | Underlying-stats features the FPL API doesn't expose |
 | Curated trend sources (config-driven whitelist) | Public, unofficial | Community consensus / template-team signal |
 | `POST https://account.premierleague.com/as/token` (OIDC, PingOne DaVinci, `grant_type=refresh_token`) | Authenticated | Exchanges a manually-captured refresh token for a short-lived access token. **Supersedes** the session email/password login originally assumed here — FPL moved auth to a hosted OIDC identity provider with a bot-guarded interactive login step, discovered live 2026-09-07. See `CLAUDE.md`'s "Execution auth" section. |
 | `GET/POST /api/my-team/{teamId}/` | Authenticated | Read/write your current squad, lineup, captain, chip. Also returns your current free-transfer count and per-chip availability (`transfers`/`chips` fields) — `TeamStateModule` reads these instead of asking you (discovered live 2026-09-08; see §3's `TeamStateModule` row). |
 | `POST /api/transfers/` | Authenticated | Submit transfers — single `confirmed: true` request applies it directly. **Not** the dry-run-then-commit pattern a community library assumed: verified live 2026-09-08 that `confirmed: false` alone already applies the transfer, no second call needed (or safe to send). |
 
-The authenticated endpoints are undocumented and only known through community reverse-engineering — before building `ExecutionModule`, capture the exact request/response shapes yourself via your browser's network tab while making a manual transfer, rather than trusting a third-party writeup verbatim. Contracts here can drift season to season. **Done for auth, `/api/my-team/`, and `/api/transfers/`** (captured/verified live 2026-09-07 and 2026-09-08, see `CLAUDE.md`'s "Execution auth"); chip behavior (`setLineup`'s `chip` field, `/api/transfers/`'s `wildcard`/`freehit` flags) is still unverified.
+The authenticated endpoints are undocumented and only known through community reverse-engineering — before building `ExecutionModule`, capture the exact request/response shapes yourself via your browser's network tab while making a manual transfer, rather than trusting a third-party writeup verbatim. Contracts here can drift season to season. **Done for auth, `/api/my-team/`, `/api/transfers/`, and `setLineup`'s `chip` field** (captured/verified live 2026-09-07 and 2026-09-08, see `CLAUDE.md`'s "Execution auth") — Bench Boost and Triple Captain both verified live 2026-09-08 (including resolving whether the ×3 is client-sent or server-derived: it's server-derived, from the `chip` field alone); only `/api/transfers/`'s `wildcard`/`freehit` flags remain unverified, blocked on this test account not yet having a saved squad/gameweek history.
 
 ---
 
@@ -157,14 +163,31 @@ The sketch below is now real, via Postgres + TypeORM
 Field names differ cosmetically (camelCase, per TS/TypeORM convention, not
 snake_case), and a few fields were added as building revealed the need
 (`Gameweek.finished`; `Proposal.deadlineAt`, `benchGoalkeeperId`,
-`benchOutfieldIds`, `viceCaptainId`) — otherwise this is still an accurate
-picture of the schema. See `CLAUDE.md`'s "Persistence" section for the
-Docker/migration workflow.
+`benchOutfieldIds`, `viceCaptainId`, `appliedManually`, `resultReportedAt`)
+— otherwise this is still an accurate picture of the schema. See
+`CLAUDE.md`'s "Persistence" section for the Docker/migration workflow.
+
+**Season-scoped identity (added 2026-09-08).** FPL's gameweek `id` resets
+to 1 every season with no season field anywhere in `bootstrap-static` to
+disambiguate — discovered live once this bot had been running long enough
+for the question to matter. Left unaddressed, this would have silently
+collided across a season rollover: `Gameweek`/`PlayerSnapshot`'s primary
+keys and `Proposal`'s restart-safe dedupe lookup would all match a prior
+season's row with the same gameweek number, most seriously causing the
+scheduler to conclude "already proposed this gameweek" for an entire new
+season and silently stop generating proposals. Fixed with a derived
+`season` field ("YY_YY", from each gameweek's own deadline —
+`src/common/utils/season.util.ts`) threaded through as part of the
+identity everywhere gameweek number alone isn't unique enough:
+`Gameweek`/`Proposal.season`, plus composite primary keys on
+`Gameweek`/`PlayerSnapshot`. `Gameweek.id` itself is untouched — it's the
+real FPL event id needed for API calls, only its *uniqueness* needed
+fixing.
 
 ```
-Gameweek(id, deadline_at, is_current, is_next)
-PlayerSnapshot(gameweek_id, player_id, price, ownership_pct, predicted_points, form, xg, xa, ...)
-Proposal(id, gameweek_id, transfers_json, lineup_json, captain_id, chip, expected_gain, hit_cost, status, created_at)
+Gameweek(id, season, deadline_at, is_current, is_next, finished)
+PlayerSnapshot(gameweek_id, season, player_id, price, ownership_pct, predicted_points, form, xg, xa, ...)
+Proposal(id, gameweek_id, season, transfers_json, lineup_json, captain_id, chip, expected_gain, hit_cost, status, created_at, applied_manually, result_reported_at)
 Approval(proposal_id, decided_by, decision, decided_at)
 ExecutionLog(proposal_id, request_payload, response_payload, applied_at, success)
 ```
@@ -192,7 +215,11 @@ signed token — they ride on Telegram's own inline-button `callback_data`
 configured chat id. Telegram's `callback_query` only ever fires from an
 actual tap on that exact button in that exact message, which already
 satisfies "a stray message can't accidentally approve the wrong week"
-without a separate signing layer.
+without a separate signing layer. A second callback namespace
+(`appliedyes:<id>` / `appliedno:<id>`) was added 2026-09-08 for the
+post-deadline check-in (§3's `ApprovalModule` row) — same binding
+mechanism, but it labels an already-terminal proposal rather than
+deciding one, so it bypasses the approval state machine entirely.
 
 ---
 
@@ -250,10 +277,14 @@ The actual layout groups some of these under subfolders
 anticipate: `persistence/` (entities + migrations, one place for the whole
 schema — see §6), `common/` (shared domain types/enums/interfaces used
 across modules), `config/` (typed env config for `@nestjs/config`),
-`team-state/` (§3's `TeamStateModule`), and `auth/` (§3's `AuthModule` —
+`team-state/` (§3's `TeamStateModule`), `auth/` (§3's `AuthModule` —
 `FplAuthClient` now lives at `auth/clients/`, not `execution/clients/` as
-this sketch's `execution/fpl-auth.client.ts` entry implies). The real
-`src/` tree is authoritative over this sketch.
+this sketch's `execution/fpl-auth.client.ts` entry implies), and
+`results/` (§3's `ResultsModule` — `gameweek-scoring.util.ts` is the
+autosub/chip-accurate scoring simulation, kept as a standalone pure
+function specifically so its correctness could be tested in isolation
+from the rest of the module). The real `src/` tree is authoritative over
+this sketch.
 
 ---
 
@@ -265,7 +296,7 @@ this sketch's `execution/fpl-auth.client.ts` entry implies). The real
 | Wrong deadline assumption causes a missed or late change | Always derive the deadline from `bootstrap-static` per run; schedule with margin; re-check immediately before executing |
 | Approval race / stale proposal | Bind approvals to a specific proposal ID + gameweek; reject any approval that arrives after that gameweek's deadline |
 | Credential compromise | Isolate credentials to the execution module only; encrypt at rest; rotate session rather than storing raw password where possible |
-| Model overconfidence | Log every proposal's predicted vs. actual points; treat prediction as a decision-support signal, not a guarantee — realistically, beating informed human consensus by a wide margin is hard |
+| Model overconfidence | Log every proposal's predicted vs. actual points; treat prediction as a decision-support signal, not a guarantee — realistically, beating informed human consensus by a wide margin is hard. **Implemented 2026-09-08** as `ResultsModule`'s post-gameweek report (§3) — a real per-proposal predicted-vs-actual comparison, not just a plan. |
 | Scraping social/trend sources breaks or gets blocked | Use a small explicit source whitelist you control, not open-ended scraping; degrade gracefully (proceed on model + fixtures alone) if a source is unavailable |
 
 ---
