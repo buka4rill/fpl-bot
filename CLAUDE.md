@@ -46,7 +46,8 @@ file is the short version for whichever session picks this repo up next.
 | `team-state` | implemented (2026-09-08, rebuilt same day) — reads free transfers + chip availability live from FPL's authenticated my-team endpoint (via `ExecutionService`) and sends it as an informational Telegram report before each week's proposal; no persistence, never blocks; `POST /team-state/report` manually re-triggers it for testing — see "Weekly team-status report" below |
 | `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), `POST /proposal/chip` (declare a chip for this week's proposal, goes through the real optimizer), and `POST /proposal/chip-manual` (declare a chip on the current live squad unchanged, bypassing the optimizer — used to verify Bench Boost live, see "Execution auth" below) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
-| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:`, plus `appliedyes:`/`appliedno:` — see "Post-deadline applied-manually check-in" below); triggers execution on `APPROVED` |
+| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:`, plus `appliedyes:`/`appliedno:` — see "Post-deadline applied-manually check-in" below); triggers execution on `APPROVED`. Also the single Telegram webhook entry point for plain-message slash commands — see `telegram-commands` below |
+| `telegram-commands` | implemented (2026-09-08) — `/status`, `/propose`, `/login`, `/help` reachable from the Telegram chat itself, routed through `ApprovalController`'s webhook (the only Telegram entry point) to `TelegramCommandsService`; see "Telegram slash commands" below |
 | `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers, Bench Boost, and Triple Captain all verified live 2026-09-08; Wildcard/Free Hit still unverified — see below |
 | `auth` | implemented (2026-09-08) — holds `FplAuthClient`/the authenticated session (moved out of `ExecutionModule`, see "Execution auth" below); `AuthService.isAuthenticated()`/`assertAuthenticated()` let other modules check/gate on login state; `POST /auth/token` (shared-secret guarded) applies a freshly-captured refresh token to the running instance — the landing spot for `pnpm run auth:login`'s Playwright-assisted capture (`scripts/auth-login.ts`) |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday); also gates on `AuthService.isAuthenticated()` before generating a proposal — see "Execution auth" below |
@@ -367,6 +368,56 @@ solver's effective threshold becomes 8, not 4 — while the real, reported
 `4 × hits taken`. Both inert under Wildcard/Free Hit (transfers are already
 free that week). See the regression tests in
 `squad-optimizer.service.spec.ts` for the exact before/after behavior.
+
+## Telegram slash commands (2026-09-08, implemented)
+
+The Telegram webhook (`ApprovalController`'s single `/approval/telegram-callback`
+route — Telegram posts every update type there, button taps and plain
+messages alike) previously only ever handled `callback_query` updates; a
+typed message like `/status` was silently ignored — received, acknowledged
+with a bare `{ok:true}`, nothing done. Fixed by also handling `message`
+updates whose text starts with `/`, routed (after the same
+`assertConfiguredChat` check callback_query already used) to a new
+`TelegramCommandsService` (`src/telegram-commands/`):
+
+- **`/status`** — same as `POST /team-state/report`: live free transfers +
+  chip availability for the upcoming gameweek.
+- **`/propose`** — same as `POST /proposal/generate`: runs the real
+  optimizer-driven flow right now instead of waiting for the scheduler's
+  lead-time window.
+- **`/login`** — reports whether the FPL session is currently
+  authenticated. Deliberately **status-only, never attempts an actual
+  login** — the real login step stays unscripted on purpose (DataDome,
+  see "Execution auth" below), so this just tells you to run
+  `pnpm run auth:login` locally if you're logged out, the same as every
+  other manual endpoint's `assertAuthenticated()` message already does.
+- **`/help`** / **`/start`** — lists the commands. Unknown commands get
+  the same list appended, so a typo is never a silent no-op either.
+
+Every command is best-effort and self-reporting: any failure inside
+`TelegramCommandsService.handleCommand` is caught and sent back over
+Telegram with the underlying error's own message, rather than the command
+just silently doing nothing (the exact complaint that prompted building
+this — verified live: a stale-session `/status` call correctly reported
+`⚠️ /status failed: ... invalid_grant ...` instead of going quiet).
+`TelegramAdapter` also registers the command list with Telegram itself
+(`setMyCommands`, on module init, best-effort) so they show up in the `/`
+autocomplete menu in the chat.
+
+**Live-testing this surfaced a real operational gotcha, not a bug in the
+feature itself:** dev and the deployed prod instance currently share one
+FPL account (see "Decided 2026-09-08: prod stays on the disposable test
+account" above), and FPL allows only one active session per account. A
+`pnpm run auth:login` run pushes to whichever URL `AUTH_TARGET_URL`
+currently points at (prod, after the deploy work) — so re-authenticating
+one environment silently invalidates the other's session; they can't both
+stay logged in at once as long as they share an account. Confirmed live:
+running `auth:login` fixed prod but left dev's session exactly as stale as
+before, still failing `/status` there with `invalid_grant`. **Decided
+2026-09-08: leave dev stale for now** rather than fix it (which would just
+re-break prod) — prod is what actually matters day to day. Revisit giving
+dev its own separate disposable FPL account (mirroring the Telegram bot
+split) if this ping-pong becomes a real problem.
 
 ## Weekly team-status report (2026-09-08, replaced same-day)
 

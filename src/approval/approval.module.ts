@@ -8,6 +8,7 @@ import { ProposalModule } from '../proposal/proposal.module';
 import { ExecutionModule } from '../execution/execution.module';
 import { AlertModule } from '../alert/alert.module';
 import { TeamStateModule } from '../team-state/team-state.module';
+import { TelegramCommandsModule } from '../telegram-commands/telegram-commands.module';
 import { ApprovalEntity } from '../persistence/entities/approval.entity';
 
 @Module({
@@ -17,6 +18,7 @@ import { ApprovalEntity } from '../persistence/entities/approval.entity';
     ExecutionModule,
     AlertModule,
     TeamStateModule,
+    TelegramCommandsModule,
     HttpModule,
   ],
   controllers: [ApprovalController],

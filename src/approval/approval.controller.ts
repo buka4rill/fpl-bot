@@ -3,22 +3,28 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ApprovalService } from './approval.service';
+import { TelegramCommandsService } from '../telegram-commands/telegram-commands.service';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
 // Minimal shape of the fields we read from a Telegram Update — see
 // https://core.telegram.org/bots/api#update. Deliberately not the full
 // Update type: ApprovalModule doesn't depend on telegraf, only AlertModule
-// (which sends messages) does. Only callback_query updates (approve/reject
-// buttons) are handled — see git history for the weekly free-transfer/chip
-// prompt this used to also route (approve:<id>/reject:<id> plus chipavail:
-// callbacks and a plain-text free-transfer reply), superseded 2026-09-08 by
-// TeamStateService reading that data straight from FPL.
-interface TelegramCallbackUpdate {
+// (which sends messages) does. Two update shapes are handled: callback_query
+// (approve/reject/appliedyes/appliedno buttons) and message (slash commands
+// — /status, /propose, /login, see TelegramCommandsService). See git history
+// for the weekly free-transfer/chip prompt this used to also route
+// (chipavail: callbacks and a plain-text free-transfer reply), superseded
+// 2026-09-08 by TeamStateService reading that data straight from FPL.
+interface TelegramUpdate {
   callback_query?: {
     id: string;
     data?: string;
     from?: { id: number };
     message?: { chat?: { id: number } };
+  };
+  message?: {
+    text?: string;
+    chat?: { id: number };
   };
 }
 
@@ -53,19 +59,22 @@ export class ApprovalController {
 
   constructor(
     private readonly approvalService: ApprovalService,
+    private readonly telegramCommandsService: TelegramCommandsService,
     private readonly config: ConfigService,
     private readonly http: HttpService,
   ) {}
 
-  // Telegram webhook target. Always acknowledges (2xx) regardless of outcome
-  // — a non-2xx response makes Telegram retry the same update repeatedly.
-  // Also answers the callback_query itself: without that, the tapped
-  // button's loading spinner never clears, which we found live — Telegram
-  // resends (or the user re-taps) a callback whose spinner never stopped,
-  // and the approval state machine has to reject the resulting duplicate.
+  // Telegram webhook target — the single URL Telegram posts every update
+  // type to (button taps and plain messages alike). Always acknowledges
+  // (2xx) regardless of outcome — a non-2xx response makes Telegram retry
+  // the same update repeatedly. Also answers the callback_query itself
+  // when there is one: without that, the tapped button's loading spinner
+  // never clears, which we found live — Telegram resends (or the user
+  // re-taps) a callback whose spinner never stopped, and the approval
+  // state machine has to reject the resulting duplicate.
   @Post('telegram-callback')
   async handleTelegramCallback(
-    @Body() update: TelegramCallbackUpdate,
+    @Body() update: TelegramUpdate,
   ): Promise<{ ok: true }> {
     let toast: string;
     try {
@@ -85,9 +94,20 @@ export class ApprovalController {
     return { ok: true };
   }
 
-  private async process(update: TelegramCallbackUpdate): Promise<string> {
-    const query = update.callback_query;
-    if (!query?.data) {
+  private async process(update: TelegramUpdate): Promise<string> {
+    if (update.callback_query) {
+      return this.processCallbackQuery(update.callback_query);
+    }
+    if (update.message) {
+      return this.processCommand(update.message);
+    }
+    return '';
+  }
+
+  private async processCallbackQuery(
+    query: NonNullable<TelegramUpdate['callback_query']>,
+  ): Promise<string> {
+    if (!query.data) {
       return '';
     }
 
@@ -114,6 +134,21 @@ export class ApprovalController {
     const decidedBy = query.from ? String(query.from.id) : String(chatId);
     await this.approvalService.decide(proposalId, decision, decidedBy);
     return DECISION_TOAST[decision];
+  }
+
+  // Slash commands (/status, /propose, /login, /help) — see
+  // TelegramCommandsService for what each one does. No toast to return
+  // here: there's no callback_query spinner to clear for a plain message,
+  // and each command sends its own Telegram reply once it's done.
+  private async processCommand(
+    message: NonNullable<TelegramUpdate['message']>,
+  ): Promise<string> {
+    if (!message.text?.startsWith('/')) {
+      return '';
+    }
+    this.assertConfiguredChat(message.chat?.id);
+    await this.telegramCommandsService.handleCommand(message.text);
+    return '';
   }
 
   private assertConfiguredChat(chatId: number | undefined): number {

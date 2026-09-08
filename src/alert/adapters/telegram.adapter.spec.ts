@@ -3,10 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { TelegramAdapter } from './telegram.adapter';
 
 const sendMessageMock = jest.fn();
+const setMyCommandsMock = jest.fn().mockResolvedValue(undefined);
 
 jest.mock('telegraf', () => ({
   Telegraf: jest.fn().mockImplementation(() => ({
-    telegram: { sendMessage: sendMessageMock },
+    telegram: {
+      sendMessage: sendMessageMock,
+      setMyCommands: setMyCommandsMock,
+    },
   })),
   Markup: {
     inlineKeyboard: jest.fn((buttons: unknown) => ({
@@ -43,6 +47,7 @@ describe('TelegramAdapter', () => {
 
   beforeEach(() => {
     sendMessageMock.mockClear();
+    setMyCommandsMock.mockClear();
   });
 
   it('sends a message with an approve/reject inline keyboard to the configured chat', async () => {
@@ -97,5 +102,36 @@ describe('TelegramAdapter', () => {
       adapter.sendAppliedCheckIn('did you apply it?', 'prop-1'),
     ).resolves.toBeUndefined();
     expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  describe('onModuleInit', () => {
+    it('registers the bot command menu', async () => {
+      const adapter = await buildAdapter('test-token');
+
+      await adapter.onModuleInit();
+
+      expect(setMyCommandsMock).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ command: 'status' }),
+          expect.objectContaining({ command: 'propose' }),
+          expect.objectContaining({ command: 'login' }),
+          expect.objectContaining({ command: 'help' }),
+        ]),
+      );
+    });
+
+    it('does nothing when no bot token is configured', async () => {
+      const adapter = await buildAdapter('');
+
+      await expect(adapter.onModuleInit()).resolves.toBeUndefined();
+      expect(setMyCommandsMock).not.toHaveBeenCalled();
+    });
+
+    it('does not throw when registering the command menu fails', async () => {
+      const adapter = await buildAdapter('test-token');
+      setMyCommandsMock.mockRejectedValueOnce(new Error('rate limited'));
+
+      await expect(adapter.onModuleInit()).resolves.toBeUndefined();
+    });
   });
 });

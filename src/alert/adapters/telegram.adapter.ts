@@ -1,9 +1,22 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Markup, Telegraf } from 'telegraf';
 
+// Shown in Telegram's "/" autocomplete menu — kept in sync with
+// TelegramCommandsService's actual switch cases by hand, there being only
+// the one place that needs to know the list.
+const BOT_COMMANDS = [
+  { command: 'status', description: 'Live free transfers + chip availability' },
+  { command: 'propose', description: 'Generate and send a fresh proposal now' },
+  {
+    command: 'login',
+    description: 'Check whether the FPL session is authenticated',
+  },
+  { command: 'help', description: 'List available commands' },
+];
+
 @Injectable()
-export class TelegramAdapter {
+export class TelegramAdapter implements OnModuleInit {
   private readonly logger = new Logger(TelegramAdapter.name);
   private readonly bot: Telegraf | undefined;
   private readonly chatId: string;
@@ -12,6 +25,18 @@ export class TelegramAdapter {
     const botToken = this.config.get<string>('telegram.botToken');
     this.chatId = this.config.get<string>('telegram.chatId') ?? '';
     this.bot = botToken ? new Telegraf(botToken) : undefined;
+  }
+
+  // Best-effort, one-time-ish registration (Telegram just overwrites the
+  // same list on every boot) — a failure here must never block the app
+  // from starting.
+  async onModuleInit(): Promise<void> {
+    if (!this.bot) return;
+    try {
+      await this.bot.telegram.setMyCommands(BOT_COMMANDS);
+    } catch (error) {
+      this.logger.warn(`Failed to register bot command menu: ${String(error)}`);
+    }
   }
 
   // Approve/Reject buttons carry the proposal ID as callback_data; Telegram

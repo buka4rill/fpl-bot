@@ -5,11 +5,13 @@ import { of } from 'rxjs';
 import { AxiosResponse } from 'axios';
 import { ApprovalController } from './approval.controller';
 import { ApprovalService } from './approval.service';
+import { TelegramCommandsService } from '../telegram-commands/telegram-commands.service';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
 describe('ApprovalController', () => {
   let controller: ApprovalController;
   let approvalService: { decide: jest.Mock; recordAppliedManually: jest.Mock };
+  let telegramCommandsService: { handleCommand: jest.Mock };
   let httpService: { post: jest.Mock };
 
   const CONFIGURED_CHAT_ID = '12345';
@@ -17,6 +19,9 @@ describe('ApprovalController', () => {
 
   beforeEach(async () => {
     approvalService = { decide: jest.fn(), recordAppliedManually: jest.fn() };
+    telegramCommandsService = {
+      handleCommand: jest.fn().mockResolvedValue(undefined),
+    };
     httpService = {
       post: jest.fn().mockReturnValue(of({ data: {} } as AxiosResponse)),
     };
@@ -25,6 +30,10 @@ describe('ApprovalController', () => {
       controllers: [ApprovalController],
       providers: [
         { provide: ApprovalService, useValue: approvalService },
+        {
+          provide: TelegramCommandsService,
+          useValue: telegramCommandsService,
+        },
         { provide: HttpService, useValue: httpService },
         {
           provide: ConfigService,
@@ -202,5 +211,67 @@ describe('ApprovalController', () => {
     await controller.handleTelegramCallback(update('appliedyes:prop-1', 99999));
 
     expect(approvalService.recordAppliedManually).not.toHaveBeenCalled();
+  });
+
+  describe('slash commands', () => {
+    const message = (text: string, chatId: number | undefined = 12345) => ({
+      message: {
+        text,
+        chat: chatId === undefined ? undefined : { id: chatId },
+      },
+    });
+
+    it('dispatches a /status command from the configured chat', async () => {
+      const result = await controller.handleTelegramCallback(
+        message('/status'),
+      );
+
+      expect(telegramCommandsService.handleCommand).toHaveBeenCalledWith(
+        '/status',
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('dispatches /propose and /login the same way', async () => {
+      await controller.handleTelegramCallback(message('/propose'));
+      await controller.handleTelegramCallback(message('/login'));
+
+      expect(telegramCommandsService.handleCommand).toHaveBeenCalledWith(
+        '/propose',
+      );
+      expect(telegramCommandsService.handleCommand).toHaveBeenCalledWith(
+        '/login',
+      );
+    });
+
+    it('ignores a command from an unrecognized chat', async () => {
+      await controller.handleTelegramCallback(message('/status', 99999));
+
+      expect(telegramCommandsService.handleCommand).not.toHaveBeenCalled();
+    });
+
+    it('ignores a plain-text message that is not a command', async () => {
+      await controller.handleTelegramCallback(message('just chatting'));
+
+      expect(telegramCommandsService.handleCommand).not.toHaveBeenCalled();
+    });
+
+    it('does not answer a callback query for a plain message', async () => {
+      await controller.handleTelegramCallback(message('/status'));
+
+      expect(httpService.post).not.toHaveBeenCalled();
+    });
+
+    it('still acknowledges the webhook when command handling throws', async () => {
+      telegramCommandsService.handleCommand.mockRejectedValue(
+        new Error('boom'),
+      );
+
+      const result = await controller.handleTelegramCallback(
+        message('/status'),
+      );
+
+      expect(result).toEqual({ ok: true });
+    });
   });
 });
