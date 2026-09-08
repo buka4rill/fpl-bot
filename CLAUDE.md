@@ -306,6 +306,26 @@ setup — real ops overhead for a bot serving exactly one user. Railway is a
 close second to Fly if comparing options. Not started — no Dockerfile or
 deploy config exists yet.
 
+**Also needs doing at that point, raised 2026-09-08, not started:**
+`FplAuthClient.persistRefreshTokenToEnv()` (see "Execution auth" above)
+only writes to a local `.env` file on disk — fine on a machine that runs
+continuously, but most PaaS hosts (Fly.io included) give the app an
+*ephemeral* filesystem, so that write is lost on the next restart/redeploy
+and the app would silently fall back to a stale token. `auth:login` itself
+doesn't need to change (still runs on your own machine, still pushes to
+`POST /auth/token`, just pointed at the deployed `AUTH_TARGET_URL` instead
+of `localhost:3000`) — only where the *received* token gets persisted
+server-side needs fixing. Two options discussed, neither built yet:
+1. **Mount a small persistent volume** (Fly.io supports these) and point
+   the existing file-write at a path on it instead of the ephemeral
+   container root. Same code, just a durable location — the cheaper fix,
+   and the one to reach for first.
+2. **Write through to the platform's own secrets API** (e.g. Fly's) so a
+   restart picks up the token as a real secret. More "correct" but needs
+   its own credential (a Fly API token, itself another secret to manage)
+   and real platform-specific integration code — not worth building
+   speculatively before there's an actual account/target to test against.
+
 ## Build order (ARCHITECTURE.md §11)
 
 1. ✅ Ingestion + prediction + optimization, recommend-only
