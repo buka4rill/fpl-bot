@@ -145,6 +145,8 @@ export class IngestionService {
       minutesPlayed: element.minutes,
       status: element.status,
       chanceOfPlayingNextRound: element.chance_of_playing_next_round,
+      position: POSITION_BY_ELEMENT_TYPE[element.element_type],
+      defensiveContribution: Number(element.defensive_contribution),
     }));
 
     // squad_total_spend is in tenths of £m, same unit as now_cost.

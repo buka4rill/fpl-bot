@@ -41,7 +41,7 @@ file is the short version for whichever session picks this repo up next.
 |---|---|
 | `ingestion` | implemented — bootstrap-static, fixtures, element-summary, live-gameweek, current-squad |
 | `trends` | scaffolded — curated source whitelist, not consumed yet |
-| `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder |
+| `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder. Now also models FPL's defensive-contribution rule (2026-09-08) — see "Defensive-contribution scoring" below |
 | `optimization` | implemented — squad optimizer (ILP) + chip evaluator. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
 | `team-state` | implemented (2026-09-08, rebuilt same day) — reads free transfers + chip availability live from FPL's authenticated my-team endpoint (via `ExecutionService`) and sends it as an informational Telegram report before each week's proposal; no persistence, never blocks; `POST /team-state/report` manually re-triggers it for testing — see "Weekly team-status report" below |
 | `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), `POST /proposal/chip` (declare a chip for this week's proposal, goes through the real optimizer), and `POST /proposal/chip-manual` (declare a chip on the current live squad unchanged, bypassing the optimizer — used to verify Bench Boost live, see "Execution auth" below) |
@@ -53,6 +53,61 @@ file is the short version for whichever session picks this repo up next.
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday); also gates on `AuthService.isAuthenticated()` before generating a proposal — see "Execution auth" below |
 | `results` | implemented (2026-09-08) — `ResultsService` (own hourly poll, public-API only) reports "how did my suggestion actually score" for every terminal proposal (APPROVED/REJECTED/EXPIRED) once its gameweek finishes — full autosub/chip-accurate simulation, not an approximation; `POST /results/report` manually re-triggers it — see "Post-gameweek results report" below |
 | persistence | implemented — Postgres + TypeORM, see "Persistence" below |
+
+## Defensive-contribution scoring (2026-09-08)
+
+The plan going in was to wire up `StatsProviderClient` (a no-op stub since
+day one) against a third-party CSV source
+(`olbauday/FPL-Core-Insights`, evaluated in Claude's memory as
+`stats-provider-candidate-fpl-core-insights`) to close a real gap:
+`HeuristicStrategy` didn't model FPL's 2025/26 "defensive contribution"
+rule at all (2 pts for a defender reaching 10 combined
+clearances/blocks/interceptions/tackles in a match, or a
+midfielder/forward reaching 12 including recoveries).
+
+**Turned out not to need the third-party source at all.** Live testing
+against FPL's own `bootstrap-static` endpoint (already fetched by
+`FplPublicClient` — just untyped) found it already returns
+`defensive_contribution` per player, and it's *exactly* the raw
+CBIT/CBIRT count the real rule uses — confirmed by cross-checking real
+players (a defender with `clearances_blocks_interceptions: 36,
+tackles: 5` shows `defensive_contribution: 41` = 36+5; a midfielder with
+`clearances_blocks_interceptions: 18, tackles: 9, recoveries: 11` shows
+`defensive_contribution: 38` = 18+9+11). So this shipped with **zero new
+dependencies and no external CSV source** — `StatsProviderClient` is
+still a stub. `RawElement` (`fpl-api.types.ts`) gained the one field;
+`PlayerSnapshot` gained `position` (duplicated from `Player` so
+backtesting history is self-contained without a join) and
+`defensiveContribution`, both set directly in
+`IngestionService.normalizeBootstrap()` (no `PredictionService`
+enrichment step needed — unlike `nextFixtureDifficulty`, which genuinely
+needs a cross-endpoint join, position/defensive-contribution are already
+per-element in the same `bootstrap-static` response). `HeuristicStrategy`
+gained `defensiveContributionBonus()`: gated on the same
+180-minute-sample threshold as the xG/xA bonus, position-aware threshold
+lookup (`Position.DEF` → 10, `MID`/`FWD` → 12, `GKP` excluded entirely),
+scaled `0..1` against that threshold and multiplied by
+`DEFENSIVE_CONTRIBUTION_POINTS_CAP = 2` — anchored to FPL's real
+per-match cap rather than an arbitrary weight, unlike the existing xG/xA
+bonus's `* 2`. `PlayerSnapshotEntity` got matching nullable columns
+(migration `AddDefensiveContributionToPlayerSnapshots`).
+
+**Verified live** with a standalone script (`NestFactory
+.createApplicationContext(IngestionModule)` + a bare `new
+HeuristicStrategy()`, no Telegram/scheduler/auth involved, deleted after
+use) against real `bootstrap-static` data: a defender and a midfielder
+both well past their threshold each got exactly the capped `+2.00`
+(cap holds precisely, no overshoot); a high-form forward got a smaller,
+proportional `+0.84` (real defensive activity, just below threshold) —
+confirms attackers aren't materially skewed by this while a genuinely
+hard-pressing forward still isn't ignored outright.
+
+**Deliberately deferred, not part of this change**: everything the
+third-party source uniquely offers and FPL's own API genuinely doesn't —
+team Elo ratings (better fixture-strength signal than FPL's blunt 1-5
+`fixtureMultiplier`) and xGOT/big-chances (richer attacker-quality signal
+than the existing per-90 xG/xA bonus). `StatsProviderClient` stays a stub
+until that's picked up as its own task.
 
 ## Persistence
 

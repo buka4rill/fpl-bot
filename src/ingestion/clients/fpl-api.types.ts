@@ -49,6 +49,11 @@ export interface RawElement {
   minutes: number; // season-cumulative
   status: string; // 'a' | 'd' | 'i' | 's' | 'u'
   chance_of_playing_next_round: number | null;
+  // Season-cumulative combined CBIT (DEF) / CBIRT (MID/FWD) action count —
+  // backs the 2025/26 defensive-contribution rule (2 pts at 10 for DEF, 12
+  // for MID/FWD). A genuine JSON number, unlike expected_goals/
+  // expected_assists above — confirmed via a live bootstrap-static call.
+  defensive_contribution: number;
 }
 
 export interface BootstrapStaticResponse {

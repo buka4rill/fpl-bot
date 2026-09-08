@@ -1,5 +1,6 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import { PlayerSnapshot } from '../../common/types/domain.types';
+import { Position } from '../../common/enums/position.enum';
 
 // One row per (season, gameweek, player) — not overwritten across
 // gameweeks, so this is the backtestable history ARCHITECTURE.md §6 calls
@@ -51,6 +52,12 @@ export class PlayerSnapshotEntity implements PlayerSnapshot {
 
   @Column({ type: 'int', nullable: true })
   nextFixtureDifficulty?: number;
+
+  @Column({ type: 'varchar', nullable: true })
+  position?: Position;
+
+  @Column({ type: 'int', nullable: true })
+  defensiveContribution?: number;
 
   @Column({ type: 'timestamptz', default: () => 'now()' })
   capturedAt: string;

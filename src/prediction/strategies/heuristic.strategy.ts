@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PredictionStrategy } from '../../common/interfaces/prediction-strategy.interface';
 import { PlayerSnapshot } from '../../common/types/domain.types';
+import { Position } from '../../common/enums/position.enum';
 
 // v1 — a hand-tuned linear heuristic, not a fitted model. Weights below are
 // reasonable guesses, not backtested. See ARCHITECTURE.md §11 step 5 for the
@@ -12,6 +13,17 @@ import { PlayerSnapshot } from '../../common/types/domain.types';
 const MINUTES_THRESHOLD_FOR_UNDERLYING_STATS = 180;
 const UNDERLYING_STATS_WEIGHT = 2;
 const UNAVAILABLE_STATUSES = new Set(['i', 's', 'u']); // injured, suspended, unavailable
+
+// FPL's 2025/26 defensive-contribution rule: 2 pts for a defender reaching
+// 10 combined clearances/blocks/interceptions/tackles in a match, or a
+// midfielder/forward reaching 12 including recoveries. GKP intentionally
+// omitted — not eligible under the real rule.
+const DEFENSIVE_CONTRIBUTION_THRESHOLD: Partial<Record<Position, number>> = {
+  [Position.DEF]: 10,
+  [Position.MID]: 12,
+  [Position.FWD]: 12,
+};
+const DEFENSIVE_CONTRIBUTION_POINTS_CAP = 2; // mirrors FPL's real per-match cap
 
 @Injectable()
 export class HeuristicStrategy implements PredictionStrategy {
@@ -27,13 +39,16 @@ export class HeuristicStrategy implements PredictionStrategy {
   private score(player: PlayerSnapshot): number {
     const base = player.form ?? 0;
     const underlyingStatsBonus = this.underlyingStatsBonus(player);
+    const defensiveContributionBonus = this.defensiveContributionBonus(player);
     const fixtureMultiplier = this.fixtureMultiplier(
       player.nextFixtureDifficulty,
     );
     const availabilityMultiplier = this.availabilityMultiplier(player);
 
     return (
-      (base + underlyingStatsBonus) * fixtureMultiplier * availabilityMultiplier
+      (base + underlyingStatsBonus + defensiveContributionBonus) *
+      fixtureMultiplier *
+      availabilityMultiplier
     );
   }
 
@@ -67,5 +82,20 @@ export class HeuristicStrategy implements PredictionStrategy {
     const xgPer90 = (player.xg ?? 0) * per90Factor;
     const xaPer90 = (player.xa ?? 0) * per90Factor;
     return (xgPer90 + xaPer90) * UNDERLYING_STATS_WEIGHT;
+  }
+
+  private defensiveContributionBonus(player: PlayerSnapshot): number {
+    const minutes = player.minutesPlayed ?? 0;
+    if (minutes < MINUTES_THRESHOLD_FOR_UNDERLYING_STATS) {
+      return 0;
+    }
+    const threshold =
+      player.position && DEFENSIVE_CONTRIBUTION_THRESHOLD[player.position];
+    if (!threshold) {
+      return 0;
+    }
+    const per90Factor = 90 / minutes;
+    const dcPer90 = (player.defensiveContribution ?? 0) * per90Factor;
+    return Math.min(dcPer90 / threshold, 1) * DEFENSIVE_CONTRIBUTION_POINTS_CAP;
   }
 }

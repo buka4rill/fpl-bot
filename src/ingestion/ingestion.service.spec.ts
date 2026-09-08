@@ -73,6 +73,7 @@ describe('IngestionService', () => {
         minutes: 270,
         status: 'a',
         chance_of_playing_next_round: null,
+        defensive_contribution: 5,
       },
     ],
   };
@@ -148,6 +149,8 @@ describe('IngestionService', () => {
         minutesPlayed: 270,
         status: 'a',
         chanceOfPlayingNextRound: null,
+        position: Position.GKP,
+        defensiveContribution: 5,
       },
     ]);
 

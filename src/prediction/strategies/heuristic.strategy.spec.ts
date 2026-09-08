@@ -1,5 +1,6 @@
 import { HeuristicStrategy } from './heuristic.strategy';
 import { PlayerSnapshot } from '../../common/types/domain.types';
+import { Position } from '../../common/enums/position.enum';
 
 describe('HeuristicStrategy', () => {
   let strategy: HeuristicStrategy;
@@ -70,6 +71,101 @@ describe('HeuristicStrategy', () => {
     ]);
     // per90Factor = 90/450 = 0.2; (0.5*0.2 + 0.5*0.2) * weight(2) = 0.4
     expect(result.predictedPoints).toBeCloseTo(3.4, 5);
+  });
+
+  it('awards the full defensive-contribution bonus once a defender hits the 10-action threshold', async () => {
+    const [result] = await strategy.predict([
+      {
+        ...basePlayer,
+        form: 3,
+        position: Position.DEF,
+        minutesPlayed: 450,
+        defensiveContribution: 50, // per90Factor 0.2 -> dcPer90 = 10
+      },
+    ]);
+    expect(result.predictedPoints).toBeCloseTo(5, 5); // 3 + 2
+  });
+
+  it('caps the defensive-contribution bonus at 2 even well past the threshold', async () => {
+    const [result] = await strategy.predict([
+      {
+        ...basePlayer,
+        form: 3,
+        position: Position.DEF,
+        minutesPlayed: 450,
+        defensiveContribution: 100, // dcPer90 = 20, double the threshold
+      },
+    ]);
+    expect(result.predictedPoints).toBeCloseTo(5, 5); // still 3 + 2, not 3 + 4
+  });
+
+  it('gives partial defensive-contribution credit below the threshold', async () => {
+    const [result] = await strategy.predict([
+      {
+        ...basePlayer,
+        form: 3,
+        position: Position.DEF,
+        minutesPlayed: 450,
+        defensiveContribution: 25, // dcPer90 = 5, half the threshold
+      },
+    ]);
+    expect(result.predictedPoints).toBeCloseTo(4, 5); // 3 + (5/10)*2
+  });
+
+  it('uses the 12-action threshold for midfielders and forwards', async () => {
+    const [midResult] = await strategy.predict([
+      {
+        ...basePlayer,
+        form: 3,
+        position: Position.MID,
+        minutesPlayed: 450,
+        defensiveContribution: 60, // dcPer90 = 12
+      },
+    ]);
+    const [fwdResult] = await strategy.predict([
+      {
+        ...basePlayer,
+        form: 3,
+        position: Position.FWD,
+        minutesPlayed: 450,
+        defensiveContribution: 60,
+      },
+    ]);
+    expect(midResult.predictedPoints).toBeCloseTo(5, 5);
+    expect(fwdResult.predictedPoints).toBeCloseTo(5, 5);
+  });
+
+  it('never gives goalkeepers a defensive-contribution bonus', async () => {
+    const [result] = await strategy.predict([
+      {
+        ...basePlayer,
+        form: 3,
+        position: Position.GKP,
+        minutesPlayed: 450,
+        defensiveContribution: 999,
+      },
+    ]);
+    expect(result.predictedPoints).toBe(3);
+  });
+
+  it('ignores defensive contribution below the minutes sample threshold', async () => {
+    const [result] = await strategy.predict([
+      {
+        ...basePlayer,
+        form: 3,
+        position: Position.DEF,
+        minutesPlayed: 90,
+        defensiveContribution: 100,
+      },
+    ]);
+    expect(result.predictedPoints).toBe(3);
+  });
+
+  it('degrades to no bonus when position/defensiveContribution are missing', async () => {
+    const [result] = await strategy.predict([
+      { ...basePlayer, form: 3, minutesPlayed: 450 },
+    ]);
+    expect(result.predictedPoints).toBe(3);
   });
 
   it('preserves the original snapshot fields', async () => {

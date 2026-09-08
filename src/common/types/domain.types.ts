@@ -62,6 +62,12 @@ export interface PlayerSnapshot {
   // 1 (easiest) to 5 (hardest). Filled in by PredictionService from ingested
   // fixtures — absent on the snapshot as returned by IngestionService itself.
   nextFixtureDifficulty?: number;
+  // Static identity, duplicated here (not just on Player) so backtesting
+  // history is self-contained without a join back to the players table.
+  position?: Position;
+  // Season-cumulative CBIT/CBIRT count, straight from FPL — see
+  // HeuristicStrategy for how the position-specific threshold is applied.
+  defensiveContribution?: number;
 }
 
 export interface PositionRules {
