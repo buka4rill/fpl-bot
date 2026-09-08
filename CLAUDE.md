@@ -516,7 +516,7 @@ the model, not a "what if"), otherwise noting REJECTED or, for EXPIRED,
 echoing back whatever the check-in's `appliedManually` answer was (or that
 none came in).
 
-## Deploy (Fly.io) + CI/CD (2026-09-08 — config built, first real deploy not yet run)
+## Deploy (Fly.io) + CI/CD (2026-09-08 — live)
 
 Raised 2026-09-07: `dev:webhook`'s Cloudflare *quick* tunnel
 (`trycloudflare.com`) failed 8/8 fresh attempts in one session (and failed
@@ -533,14 +533,28 @@ testing the webhook-receiving side), not the deployment story.
 
 **Fly.io**, as recommended here previously — a permanent `https://*.fly.dev`
 domain out of the box (webhook set once, no tunnel ever again), deploys
-from a Dockerfile, Postgres available as its own Fly app. All the config
-for this now exists (`Dockerfile`, `.dockerignore`, `fly.toml`,
-`.github/workflows/{ci,deploy}.yml`) — what's left is account-level setup
-only you can do (sign-up, `fly auth login`, first `fly launch`/secrets),
-covered in the runbook below. The Dockerfile build and a local container
-run against the real dev Postgres were both verified live 2026-09-08
-(health check returned 200, migrations ran clean) — the remaining
-unverified step is the actual `fly deploy` itself.
+from a Dockerfile, Postgres as its own Fly app. **Live as of 2026-09-08**:
+app `fpl-bot-buka4rill` at https://fpl-bot-buka4rill.fly.dev, Postgres
+cluster `fpl-bot-buka4rill-db` attached (`DATABASE_URL`), 1GB volume
+`fpl_bot_data` mounted at `/data` for the refresh-token store, all 6
+secrets deployed (`DATABASE_URL`, `FPL_TEAM_ID`, `FPL_REFRESH_TOKEN`,
+`AUTH_PUSH_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Verified
+live end-to-end, not just "booted": `POST /team-state/report` against the
+deployed instance returned real, correct FPL data (chip
+statuses matching what local testing had just shown) — confirms secrets,
+DB, and the FPL auth flow all actually work in production, not just
+locally. The Telegram webhook is now registered at the permanent URL
+(`getWebhookInfo` confirmed, zero pending updates) — **the tunnel saga
+from earlier this session is over**; a real Approve/Reject tap should
+reach the app directly from here on, no more manual callback replay.
+Billing: Fly requires a payment method for any usage (no free tier since
+2023) — this setup (2 always-on `shared-cpu-1x`/256MB VMs + two 1GB
+volumes) runs an estimated **~$4-5/month**, confirmed against Fly's own
+pricing page before committing to it. `auth:login` hasn't been re-run
+against the deployed `AUTH_TARGET_URL` yet — not urgent, since the token
+already on the server (pushed as a secret from the local session) is
+still valid and working; do it the next time the token actually goes
+stale (see "Execution auth" above for why that happens routinely).
 
 **A few real bugs surfaced getting the Docker build working, all fixed
 2026-09-08:**
@@ -593,55 +607,55 @@ this project — revisit if it's ever actually used for something specific.
 automatic on merge — a deliberate choice, since a bad deploy here means an
 autonomous bot pushing bad changes to a real FPL account, not just a
 broken staging site. Run it from the Actions tab once CI is green on the
-commit you want live; needs a `FLY_API_TOKEN` repo secret (see runbook).
+commit you want live. `FLY_API_TOKEN` is already set as a GitHub repo
+secret — `fly launch` did this automatically (detected the GitHub remote
+and pushed it via `gh`) as part of the first launch below, not something
+that needed doing by hand.
 
-### Runbook — what's left to actually go live
+**`fly launch` gotcha, hit live during the actual launch — watch for this
+if the app is ever relaunched or launched fresh elsewhere:** even with
+`--copy-config` (meant to respect the existing `fly.toml`/`Dockerfile`
+as-is), it still silently ran `pnpm add -w -D @flydotio/dockerfile` (an
+unwanted devDependency + lockfile churn — it correctly decided to *skip*
+regenerating the Dockerfile itself, but added the package regardless) and
+generated its own `.github/workflows/fly-deploy.yml`, defaulting to
+**deploy on every push to `main`** — directly contradicting the
+manual-trigger-only decision this project already made. Both were caught
+and reverted before committing (`git checkout -- package.json
+pnpm-lock.yaml`, delete the generated workflow) — this project's own
+hand-written `deploy.yml` is the one that should exist. Always diff
+everything `fly launch`/`fly deploy` touch before trusting them blindly.
 
-Everything below is either an account-level action only you can take, or
-a one-time provisioning step best done deliberately rather than silently
-by an agent (creating billed cloud resources). Fly CLI commands are
-copy-pasteable once you're logged in.
+### How it was actually set up (2026-09-08) — reference for next time
 
-1. **Sign up at https://fly.io** and install `flyctl`
-   (`iwr https://fly.io/install.ps1 -useb | iex` on Windows, or see
-   Fly's own install docs for your platform).
-2. **`fly auth login`** — opens a browser, one-time.
-3. **Pick a unique app name** and update it in `fly.toml`'s `app =` line
-   (Fly app names are globally unique — `fpl-bot` is very likely taken).
-4. **`fly launch --no-deploy`** from the repo root — detects the existing
-   `fly.toml`/`Dockerfile`, creates the app on Fly without deploying yet.
-5. **Create the Postgres app and attach it**: `fly postgres create`, then
-   `fly postgres attach <postgres-app-name>` (run from the repo root, or
-   pass `--app <your-app-name>`) — this automatically sets `DATABASE_URL`
-   as a secret on the main app.
-6. **Create the volume** `fly.toml` already references:
-   `fly volumes create fpl_bot_data --size 1` (1GB is overkill for a
-   handful of bytes, but it's Fly's minimum).
-7. **Set the remaining secrets** (never commit these):
-   ```
-   fly secrets set FPL_TEAM_ID=... FPL_REFRESH_TOKEN=... AUTH_PUSH_SECRET=... TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
-   ```
-8. **`fly deploy`** — first real deploy. Watch `fly logs` for the same
-   clean boot sequence verified locally (all modules initialized, routes
-   mapped, no errors).
-9. **Point `auth:login` at the deployed instance**: set
-   `AUTH_TARGET_URL=https://<your-app-name>.fly.dev` in your local `.env`,
-   then run `pnpm run auth:login` once from your own terminal to push a
-   fresh token to the now-live instance (same script, same flow as local —
-   only the target URL changes).
-10. **Re-register the Telegram webhook** at the permanent Fly URL instead
-    of a tunnel — either adapt `scripts/dev-webhook.ts`'s `setWebhook` call
-    for a one-off manual run, or call Telegram's `setWebhook` API directly:
-    `https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-app-name>.fly.dev/approval/telegram-callback`.
-    This is the step that actually ends the tunnel saga — once done, a
-    real Approve/Reject tap should reach the app with no manual replay
-    needed, for the first time all session.
-11. **For CI's deploy workflow**: add a `FLY_API_TOKEN` repo secret
-    (Settings → Secrets and variables → Actions) — generate one with
-    `fly tokens create deploy`.
+1. Signed up at fly.io via GitHub SSO; installed `flyctl`
+   (`iwr https://fly.io/install.ps1 -useb | iex` on Windows).
+2. `fly auth login` — browser-based, one-time (had to be run from the
+   user's own terminal — an agent's sandboxed shell can't drive the
+   browser flow).
+3. First `fly launch --no-deploy --copy-config --name fpl-bot-buka4rill
+   --region lhr --yes` attempt failed with "requested machine count
+   exceeds organization limit" — Fly blocks *any* machine creation
+   without a payment method on file, even within free-usage bounds (no
+   free tier exists as of 2023). Added a card at
+   `fly.io/dashboard/personal/billing`, then the same command succeeded —
+   see the gotcha above for what it changed that had to be reverted.
+4. `fly volumes create fpl_bot_data --app fpl-bot-buka4rill --region lhr
+   --size 1 --yes`.
+5. `fly secrets set -a fpl-bot-buka4rill FPL_TEAM_ID=... FPL_REFRESH_TOKEN=...
+   AUTH_PUSH_SECRET=... TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... --stage`
+   (`DATABASE_URL` was already set automatically by `fly postgres attach`,
+   which `fly launch` also ran as part of step 3).
+6. `fly deploy --app fpl-bot-buka4rill` — real first deploy, verified via
+   `fly logs` (clean boot, all modules initialized) and a live
+   `POST /team-state/report` call against the deployed URL.
+7. Re-registered the Telegram webhook at the permanent URL via a direct
+   `setWebhook` call (`https://api.telegram.org/bot<TOKEN>/setWebhook?url=
+   https://fpl-bot-buka4rill.fly.dev/approval/telegram-callback`) —
+   confirmed via `getWebhookInfo`.
 
-Once through this once, revisit the deferred **auto-execution vs.
-notification-only** question below with real production data in hand,
+Revisit the deferred **auto-execution vs. notification-only** question
+below now that there's a real production deploy to gather data from,
 per that section's own note.
 
 ## Build order (ARCHITECTURE.md §11)
