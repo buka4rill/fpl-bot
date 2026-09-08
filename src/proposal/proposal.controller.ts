@@ -184,4 +184,59 @@ export class ProposalController {
     await this.alertService.sendProposal(proposal, players, snapshots);
     return { proposalId: proposal.id };
   }
+
+  // Manual override, independent of SquadOptimizerService: declares a chip
+  // on your currently-live squad, lineup/bench/captaincy otherwise
+  // unchanged — same motivation as captain-swap/manual-transfer above.
+  // `/proposal/chip` goes through SquadOptimizerService, which (via
+  // PredictionService.predictGameweek) calls IngestionService.getCurrentSquad
+  // — the *public* entry/picks endpoint, keyed off entry.current_event. That
+  // 404s for this disposable test account (confirmed live 2026-09-08 testing
+  // Bench Boost: entry.current_event is 3, but /event/3/picks/ 404s — no
+  // saved picks history for its own current gameweek), the same gap
+  // manual-transfer's doc comment already flagged. This endpoint sidesteps
+  // it entirely by building the proposal from
+  // ExecutionService.getCurrentSquadShape() (authenticated) instead, same as
+  // captain-swap/manual-transfer. Only useful for a chip that doesn't need
+  // the transfer endpoint (Bench Boost/Triple Captain) — Wildcard/Free Hit
+  // make more sense through the real optimizer since they're meant to
+  // accompany transfers.
+  @Post('chip-manual')
+  async proposeChipManual(
+    @Body() body: { chip: FplChip },
+  ): Promise<{ proposalId: string }> {
+    if (!Object.values(FplChip).includes(body.chip)) {
+      throw new Error(`Unknown chip: ${String(body.chip)}`);
+    }
+    await this.authService.assertAuthenticated();
+
+    const teamId = Number(this.config.get<string>('fpl.teamId'));
+    const [squad, { gameweeks, players, snapshots }] = await Promise.all([
+      this.executionService.getCurrentSquadShape(teamId),
+      this.ingestionService.getBootstrapSnapshot(),
+    ]);
+
+    const targetGameweek = gameweeks.find((gameweek) => gameweek.isNext);
+    if (!targetGameweek) {
+      throw new Error('No upcoming gameweek found to propose a chip for.');
+    }
+
+    const proposal: Proposal = await this.proposalService.store({
+      gameweekId: targetGameweek.id,
+      season: targetGameweek.season,
+      deadlineAt: targetGameweek.deadlineAt,
+      transfers: [],
+      lineup: squad.lineup,
+      benchGoalkeeperId: squad.benchGoalkeeperId,
+      benchOutfieldIds: squad.benchOutfieldIds,
+      captainId: squad.captainId,
+      viceCaptainId: squad.viceCaptainId,
+      chip: body.chip,
+      expectedGain: 0,
+      hitCost: 0,
+    });
+
+    await this.alertService.sendProposal(proposal, players, snapshots);
+    return { proposalId: proposal.id };
+  }
 }

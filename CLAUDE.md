@@ -44,7 +44,7 @@ file is the short version for whichever session picks this repo up next.
 | `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder |
 | `optimization` | implemented — squad optimizer (ILP) + chip evaluator. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
 | `team-state` | implemented (2026-09-08, rebuilt same day) — reads free transfers + chip availability live from FPL's authenticated my-team endpoint (via `ExecutionService`) and sends it as an informational Telegram report before each week's proposal; no persistence, never blocks; `POST /team-state/report` manually re-triggers it for testing — see "Weekly team-status report" below |
-| `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), and `POST /proposal/chip` (declare a chip for this week's proposal) |
+| `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), `POST /proposal/chip` (declare a chip for this week's proposal, goes through the real optimizer), and `POST /proposal/chip-manual` (declare a chip on the current live squad unchanged, bypassing the optimizer — used to verify Bench Boost live, see "Execution auth" below) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
 | `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:`, plus `appliedyes:`/`appliedno:` — see "Post-deadline applied-manually check-in" below); triggers execution on `APPROVED` |
 | `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers verified live 2026-09-08; chips still unverified — see below |
@@ -197,13 +197,60 @@ transfer). Verified end-to-end via the new `POST /proposal/manual-transfer`
 override (below): propose → Telegram approve → `execution_logs` row with
 `success: true` and the new player in the returned `picks`.
 
-**Chips remain unverified.** The `chip` field on `setLineup` (Bench Boost/
-Triple Captain) and the `wildcard`/`freehit` flags on `/api/transfers/`
-still haven't been exercised live — only a plain transfer has. Also still
-unconfirmed: that Triple Captain's tripling is signalled purely by the
-`chip` field server-side (picks stay at `multiplier: 2`, not `3`). Needs
-live confirmation the first time a chip actually gets played for real —
-same watch-the-execution-log approach as the transfer verification above.
+**Bench Boost — verified live 2026-09-08 against the disposable test
+account.** `POST /proposal/chip` (the optimizer-driven path) can't be used
+for this: it goes through `PredictionService.predictGameweek()`, which
+calls `IngestionService.getCurrentSquad()` — the *public* entry/picks
+endpoint — and that 404s for this account (`entry.current_event` is 3, but
+`/event/3/picks/` 404s; no saved picks history for its own current
+gameweek — the same gap `manual-transfer`'s doc comment already flagged for
+`SquadOptimizerService`). Added `POST /proposal/chip-manual` instead — same
+"manual override built from `ExecutionService.getCurrentSquadShape()`
+(authenticated), not the public endpoint" pattern as captain-swap/
+manual-transfer, chip declared with lineup/bench/captaincy otherwise
+unchanged. Only makes sense for a chip that doesn't need the transfer
+endpoint (Bench Boost/Triple Captain) — Wildcard/Free Hit still go through
+`/proposal/chip`'s real optimizer since they're meant to accompany
+transfers. Verified end-to-end: propose → Telegram approve → `setLineup`'s
+response showed `chips: [{name: "bboost", status_for_entry: "active",
+played_by_entry: [4]}]`, confirmed independently moments later via a fresh
+`/team-state/report` call (not just the cached execution-log response).
+Also observed: playing `bboost` immediately flipped `3xc`'s
+`status_for_entry` from `available` to `unavailable` for this gameweek —
+FPL allows only one "team"-type chip (`chip_type: 'team'`, i.e. Bench
+Boost/Triple Captain) active per gameweek, confirmed live rather than
+assumed.
+
+**Triple Captain remains unverified** — blocked behind the above finding:
+this account already spent its only "team"-type chip slot for GW4 on Bench
+Boost, so Triple Captain won't show `available` again until whatever
+gameweek FPL opens next for this account/chip instance. Still unconfirmed:
+whether the tripling is signalled purely via the `chip` field server-side
+while picks stay at `multiplier: 2`, not `3` — needs live confirmation
+the next time this account (or a fresh one) has that chip available, same
+`POST /proposal/chip-manual` approach used for Bench Boost above.
+
+**`wildcard`/`freehit` on `/api/transfers/` remain unverified** — this
+account's Wildcard/Free Hit still show `unavailable` (see the correction
+below).
+
+**Telegram webhook infra note (2026-09-08, unrelated to the chip work
+above but hit while testing it)**: at the moment Bench Boost was approved,
+`pnpm run dev:webhook`'s Cloudflare quick tunnel failed all 4 fresh
+attempts (`Bad Request: bad webhook: Failed to resolve host` from
+Telegram, immediately after cloudflared itself reported a successful
+`Registered tunnel connection`) — the same flakiness the deploy TODO below
+already documents, just newly reproduced. Telegram's `getWebhookInfo` had a
+stale tunnel URL registered from an earlier, already-dead session with 4
+undelivered updates queued (`last_error_message: "Wrong response from the
+webhook: 530"`) — so a real Approve tap in Telegram silently went nowhere.
+Worked around by POSTing the same `callback_query` JSON shape directly to
+`localhost:3000/approval/telegram-callback` (the controller just parses the
+body, no Telegram-side signature to fake) rather than fighting the tunnel —
+fine for one-off local verification, but the webhook is **not currently
+live**; a real Approve/Reject tap won't reach the app again until either a
+fresh `pnpm run dev:webhook` succeeds or the eventual real deploy removes
+the tunnel dependency entirely.
 
 **Correction 2026-09-08 — not blocked on "preseason" the way it looked.**
 A live `POST /team-state/report` against the disposable test account
@@ -420,17 +467,17 @@ server-side needs fixing. Two options discussed, neither built yet:
 4. ✅ Extend execution to transfers + chips — built 2026-09-08; transfers
    verified live the same day against a disposable test account (see
    "Execution auth" above), fixing two real bugs the community-derived
-   contract had baked in. Chips still unverified — needs a real live test
-   the next time a chip is actually played
+   contract had baked in. Bench Boost verified live the same day too (see
+   "Execution auth" above) — Triple Captain and Wildcard/Free Hit still
+   unverified
 5. ⬜ Iterate the prediction model once there's backtestable history
 
-Currently at: **step 4's transfer path verified**, chips still pending (the
-test account looks like it can test Bench Boost/Triple Captain now — see
-the correction under "Execution auth" above — but Wildcard/Free Hit likely
-need it to clear a real deadline first), plus the weekly team-status
-report, the transfer-hit policy fix, and the post-deadline applied-manually
-check-in (all 2026-09-08, see above) on top of persistence. Next: step 5
-needs a few gameweeks of `PlayerSnapshot` history to accumulate.
+Currently at: **step 4's transfer path and Bench Boost verified**, Triple
+Captain/Wildcard/Free Hit still pending (see "Execution auth" above for
+what's blocking each), plus the weekly team-status report, the
+transfer-hit policy fix, and the post-deadline applied-manually check-in
+(all 2026-09-08, see above) on top of persistence. Next: step 5 needs a few
+gameweeks of `PlayerSnapshot` history to accumulate.
 
 ## Open question: keep auto-execution, or go notification-only? (deferred, not decided)
 
