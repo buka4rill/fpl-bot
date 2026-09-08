@@ -47,7 +47,7 @@ file is the short version for whichever session picks this repo up next.
 | `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), `POST /proposal/chip` (declare a chip for this week's proposal, goes through the real optimizer), and `POST /proposal/chip-manual` (declare a chip on the current live squad unchanged, bypassing the optimizer — used to verify Bench Boost live, see "Execution auth" below) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
 | `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:`, plus `appliedyes:`/`appliedno:` — see "Post-deadline applied-manually check-in" below); triggers execution on `APPROVED` |
-| `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers verified live 2026-09-08; chips still unverified — see below |
+| `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers, Bench Boost, and Triple Captain all verified live 2026-09-08; Wildcard/Free Hit still unverified — see below |
 | `auth` | implemented (2026-09-08) — holds `FplAuthClient`/the authenticated session (moved out of `ExecutionModule`, see "Execution auth" below); `AuthService.isAuthenticated()`/`assertAuthenticated()` let other modules check/gate on login state; `POST /auth/token` (shared-secret guarded) applies a freshly-captured refresh token to the running instance — the landing spot for `pnpm run auth:login`'s Playwright-assisted capture (`scripts/auth-login.ts`) |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday); also gates on `AuthService.isAuthenticated()` before generating a proposal — see "Execution auth" below |
 | persistence | implemented — Postgres + TypeORM, see "Persistence" below |
@@ -221,14 +221,20 @@ FPL allows only one "team"-type chip (`chip_type: 'team'`, i.e. Bench
 Boost/Triple Captain) active per gameweek, confirmed live rather than
 assumed.
 
-**Triple Captain remains unverified** — blocked behind the above finding:
-this account already spent its only "team"-type chip slot for GW4 on Bench
-Boost, so Triple Captain won't show `available` again until whatever
-gameweek FPL opens next for this account/chip instance. Still unconfirmed:
-whether the tripling is signalled purely via the `chip` field server-side
-while picks stay at `multiplier: 2`, not `3` — needs live confirmation
-the next time this account (or a fresh one) has that chip available, same
-`POST /proposal/chip-manual` approach used for Bench Boost above.
+**Triple Captain — verified live 2026-09-08, same session.** Owner
+cancelled Bench Boost via the FPL web app to free the "team"-chip slot
+back up, then the same `POST /proposal/chip-manual` → Telegram approve →
+execute cycle was run with `chip: '3xc'`. This resolves the open
+multiplier question: `ExecutionService.buildPicks` always sends the
+captain at `multiplier: 2` (it has no Triple-Captain-specific logic at
+all) — the *request* payload confirmed this — but the `setLineup`
+*response* came back with the same captain pick at `multiplier: 3`. FPL's
+server derives and overrides the tripled multiplier itself from the `chip`
+field; the client never needs to send `3`. No code change needed —
+`ExecutionService`'s existing behavior was already correct. Confirmed
+independently via a fresh `/team-state/report` call showing `3xc` at
+`status_for_entry: "active"`. Both Bench Boost and Triple Captain are now
+fully verified live — only Wildcard/Free Hit remain, per below.
 
 **`wildcard`/`freehit` on `/api/transfers/` remain unverified** — this
 account's Wildcard/Free Hit still show `unavailable` (see the correction
@@ -494,17 +500,17 @@ server-side needs fixing. Two options discussed, neither built yet:
 1. ✅ Ingestion + prediction + optimization, recommend-only
 2. ✅ Approval state machine + alert loop
 3. ✅ Execution for lineup/captain only — verified live end-to-end
-4. ✅ Extend execution to transfers + chips — built 2026-09-08; transfers
-   verified live the same day against a disposable test account (see
-   "Execution auth" above), fixing two real bugs the community-derived
-   contract had baked in. Bench Boost verified live the same day too (see
-   "Execution auth" above) — Triple Captain and Wildcard/Free Hit still
+4. ✅ Extend execution to transfers + chips — built 2026-09-08; transfers,
+   Bench Boost, and Triple Captain all verified live the same day against a
+   disposable test account (see "Execution auth" above), fixing two real
+   transfer bugs and resolving the Triple Captain multiplier question the
+   community-derived contract had left open. Only Wildcard/Free Hit remain
    unverified
 5. ⬜ Iterate the prediction model once there's backtestable history
 
-Currently at: **step 4's transfer path and Bench Boost verified**, Triple
-Captain/Wildcard/Free Hit still pending (see "Execution auth" above for
-what's blocking each), plus the weekly team-status report, the
+Currently at: **step 4's transfer path, Bench Boost, and Triple Captain all
+verified**, only Wildcard/Free Hit still pending (see "Execution auth"
+above for what's blocking it), plus the weekly team-status report, the
 transfer-hit policy fix, and the post-deadline applied-manually check-in
 (all 2026-09-08, see above) on top of persistence. Next: step 5 needs a few
 gameweeks of `PlayerSnapshot` history to accumulate.
