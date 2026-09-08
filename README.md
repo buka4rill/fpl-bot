@@ -256,3 +256,4 @@ message asking you to run `auth:login` rather than failing silently.
 - Full module status, hard constraints, and open architectural questions
   live in [`CLAUDE.md`](CLAUDE.md) — read it before making non-trivial
   changes.
+
