@@ -23,7 +23,7 @@ flowchart TB
         FPLPUB["FPL public API<br/>bootstrap-static, fixtures,<br/>element-summary, event/live"]
         UNDERSTAT["Underlying stats<br/>(xG/xA source)"]
         TRENDS["Curated trend sources<br/>(consensus/ownership trackers)"]
-        FPLAUTH["FPL authenticated endpoints<br/>login, my-team, transfers"]
+        FPLAUTH["FPL authenticated endpoints<br/>OIDC refresh token, my-team, transfers"]
     end
 
     subgraph Nest["NestJS application"]
@@ -32,6 +32,7 @@ flowchart TB
         TRENDSMOD["TrendsModule"]
         PREDICT["PredictionModule"]
         OPT["OptimizationModule"]
+        TEAMSTATE["TeamStateModule<br/>(live free transfers + chips)"]
         PROPOSAL["ProposalModule"]
         ALERT["AlertModule"]
         APPROVAL["ApprovalModule"]
@@ -45,6 +46,10 @@ flowchart TB
     UNDERSTAT --> INGEST
     TRENDS --> TRENDSMOD
     SCHED --> INGEST
+    SCHED --> TEAMSTATE
+    TEAMSTATE --> EXEC
+    TEAMSTATE --> ALERT
+    TEAMSTATE --> OPT
     INGEST --> DB
     INGEST --> PREDICT
     TRENDSMOD --> PREDICT
@@ -70,7 +75,8 @@ flowchart TB
 | **IngestionModule** | Typed clients for FPL's public endpoints + external stats source. Normalizes into internal `Player`, `Fixture`, `GameweekSnapshot` entities. Idempotent — safe to re-run per gameweek. |
 | **TrendsModule** | Pulls from a small, explicit whitelist of consensus/rank-tracker sources you approve in config (not open-ended scraping). Produces a lightweight "template team" / differential signal to feed the model, clearly labeled as a secondary signal. |
 | **PredictionModule** | Feature engineering (form, fixture difficulty, underlying stats, price/ownership deltas, minutes risk) → expected-points score per player per fixture. Model swappable behind an interface (`PredictionStrategy`) — start heuristic, upgrade to a trained model later without touching the rest of the pipeline. |
-| **OptimizationModule** | Given predicted points + budget/formation/club-limit constraints + current squad, solves for the best transfer(s), starting XI, captain/vice, and bench order. Also evaluates whether a chip is worth playing this week. Integer/linear programming, not a greedy heuristic. |
+| **OptimizationModule** | Given predicted points + budget/formation/club-limit constraints + current squad, solves for the best transfer(s), starting XI, captain/vice, and bench order. Integer/linear programming, not a greedy heuristic. "Also evaluates whether a chip is worth playing" is still aspirational, not built: `ChipEvaluatorService` is a deliberate stub (see CLAUDE.md) — chip play is a manual declaration today (`POST /proposal/chip`), factored into the same ILP once told, never decided automatically. |
+| **TeamStateModule** | Not in the original design — added 2026-09-08, reworked same day. Reads current free transfers and chip availability live from FPL (`GET /api/my-team/{teamId}/`, via `ExecutionModule` — see §4 — never `FplAuthClient` directly, keeping the isolation rule below intact) and sends it as an informational report through `AlertModule` before each week's proposal; the free-transfer count feeds into `OptimizationModule`. An earlier version asked you these questions over Telegram instead, on the assumption the data wasn't otherwise available — that assumption turned out wrong. See `CLAUDE.md`'s "Weekly team-status report". |
 | **ProposalModule** | Packages the optimizer's output into a `Proposal` record: recommended changes, expected point delta, reasoning summary, and a hit cost if applicable. Persisted with status `PENDING`. |
 | **AlertModule** | Renders the proposal into a human-readable message and sends it through your chosen channel, with an explicit approve/reject/edit action. |
 | **ApprovalModule** | Owns the state machine: `PENDING → APPROVED / REJECTED / EXPIRED`. Only a signed, verifiable response from you moves it out of `PENDING`. If deadline passes with no response, it auto-expires — **the fallback on silence is always "do nothing,"** never "apply anyway." |
@@ -89,11 +95,11 @@ flowchart TB
 | `GET /api/entry/{teamId}/` , `/history/`, `/event/{gw}/picks/` | Public | Your own team's current state and history |
 | External xG/xA source (e.g. Understat) | Public, unofficial | Underlying-stats features the FPL API doesn't expose |
 | Curated trend sources (config-driven whitelist) | Public, unofficial | Community consensus / template-team signal |
-| `POST https://users.premierleague.com/accounts/login/` | Authenticated | Session login (email/password → session cookie) |
-| `GET/POST /api/my-team/{teamId}/` | Authenticated | Read/write your current squad, lineup, captain, chip |
+| `POST https://account.premierleague.com/as/token` (OIDC, PingOne DaVinci, `grant_type=refresh_token`) | Authenticated | Exchanges a manually-captured refresh token for a short-lived access token. **Supersedes** the session email/password login originally assumed here — FPL moved auth to a hosted OIDC identity provider with a bot-guarded interactive login step, discovered live 2026-09-07. See `CLAUDE.md`'s "Execution auth" section. |
+| `GET/POST /api/my-team/{teamId}/` | Authenticated | Read/write your current squad, lineup, captain, chip. Also returns your current free-transfer count and per-chip availability (`transfers`/`chips` fields) — `TeamStateModule` reads these instead of asking you (discovered live 2026-09-08; see §3's `TeamStateModule` row). |
 | `POST /api/transfers/` | Authenticated | Submit transfers |
 
-The authenticated endpoints are undocumented and only known through community reverse-engineering — before building `ExecutionModule`, capture the exact request/response shapes yourself via your browser's network tab while making a manual transfer, rather than trusting a third-party writeup verbatim. Contracts here can drift season to season.
+The authenticated endpoints are undocumented and only known through community reverse-engineering — before building `ExecutionModule`, capture the exact request/response shapes yourself via your browser's network tab while making a manual transfer, rather than trusting a third-party writeup verbatim. Contracts here can drift season to season. **Done for auth + `/api/my-team/`** (captured live 2026-09-07, see `CLAUDE.md`'s "Execution auth"); `/api/transfers/` is still sourced from a community library, not a live capture, and needs verifying the first time a real transfer is submitted.
 
 ---
 
@@ -102,6 +108,7 @@ The authenticated endpoints are undocumented and only known through community re
 ```mermaid
 sequenceDiagram
     participant S as Scheduler
+    participant T as TeamState
     participant I as Ingestion
     participant P as Prediction
     participant O as Optimizer
@@ -113,7 +120,14 @@ sequenceDiagram
     S->>I: trigger run (deadline - 24h)
     I->>I: fetch bootstrap-static, fixtures, live, trends
     I->>P: normalized gameweek data
+    S->>T: report team state for this gameweek
+    T->>E: read free transfers + chips (my-team)
+    E->>F: GET /api/my-team/{teamId}/
+    F-->>E: transfers + chips
+    E-->>T: free transfers + chip availability
+    T->>U: send team-status report
     P->>O: expected points per player
+    T->>O: current free transfers
     O->>O: solve transfers/XI/captain/chip under constraints
     O->>A: proposal + reasoning
     A->>U: send alert (proposal, expected gain, hit cost)
@@ -150,6 +164,8 @@ ExecutionLog(proposal_id, request_payload, response_payload, applied_at, success
 ```
 
 Keeping `PlayerSnapshot` per gameweek (not overwritten) gives you a backtestable history — essential for eventually checking whether the prediction model is actually adding value over a naive baseline (e.g. "just captain the highest-owned premium"). Written best-effort from `PredictionService` on every proposal generation — a write failure there must never block alerting the actual proposal.
+
+A `TeamState` table briefly existed here (added, then dropped, both 2026-09-08) to back a weekly Telegram Q&A for free transfers/chip availability — removed once that data turned out to be readable live from FPL instead (see §3's `TeamStateModule` row). Worth noting only so a future session doesn't wonder why a migration adds and then drops the same table.
 
 ---
 
@@ -224,10 +240,12 @@ src/
 
 The actual layout groups some of these under subfolders
 (`ingestion/clients/`, `execution/clients/`, `alert/adapters/`,
-`prediction/strategies/`) and adds two directories this sketch didn't
+`prediction/strategies/`) and adds directories this sketch didn't
 anticipate: `persistence/` (entities + migrations, one place for the whole
-schema — see §6) and `common/` (shared domain types/enums/interfaces used
-across modules). The real `src/` tree is authoritative over this sketch.
+schema — see §6), `common/` (shared domain types/enums/interfaces used
+across modules), `config/` (typed env config for `@nestjs/config`), and
+`team-state/` (§3's `TeamStateModule`). The real `src/` tree is
+authoritative over this sketch.
 
 ---
 
