@@ -5,6 +5,7 @@ import { ExecutionService } from '../execution/execution.service';
 import { AlertService } from '../alert/alert.service';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { TeamStateService } from '../team-state/team-state.service';
+import { AuthService } from '../auth/auth.service';
 import { Proposal } from '../common/types/domain.types';
 import { FplChip } from '../common/enums/chip.enum';
 
@@ -16,6 +17,7 @@ export class ProposalController {
     private readonly alertService: AlertService,
     private readonly ingestionService: IngestionService,
     private readonly teamStateService: TeamStateService,
+    private readonly authService: AuthService,
     private readonly config: ConfigService,
   ) {}
 
@@ -26,6 +28,7 @@ export class ProposalController {
   // transfer-recommending path instead of a hand-built low-risk proposal.
   @Post('generate')
   async generateNow(): Promise<{ proposalId: string }> {
+    await this.authService.assertAuthenticated();
     const { gameweeks, players, snapshots } =
       await this.ingestionService.getBootstrapSnapshot();
     const targetGameweek = gameweeks.find((gameweek) => gameweek.isNext);
@@ -53,6 +56,7 @@ export class ProposalController {
   // autonomous execution).
   @Post('captain-swap')
   async proposeCaptainSwap(): Promise<{ proposalId: string }> {
+    await this.authService.assertAuthenticated();
     const teamId = Number(this.config.get<string>('fpl.teamId'));
     const [squad, { gameweeks, players, snapshots }] = await Promise.all([
       this.executionService.getCurrentSquadShape(teamId),
@@ -106,6 +110,7 @@ export class ProposalController {
     if (playerOutId === playerInId) {
       throw new Error('playerOutId and playerInId must be different players.');
     }
+    await this.authService.assertAuthenticated();
 
     const teamId = Number(this.config.get<string>('fpl.teamId'));
     const [squad, { gameweeks, players, snapshots }] = await Promise.all([
@@ -167,6 +172,7 @@ export class ProposalController {
     if (!Object.values(FplChip).includes(body.chip)) {
       throw new Error(`Unknown chip: ${String(body.chip)}`);
     }
+    await this.authService.assertAuthenticated();
 
     const [proposal, { players, snapshots }] = await Promise.all([
       this.proposalService.generateProposal(body.freeTransfers, body.chip),

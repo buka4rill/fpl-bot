@@ -9,10 +9,14 @@ file is the short version for whichever session picks this repo up next.
 
 - **Alert → wait for explicit OK → apply.** No autonomous execution. Silence
   before deadline resolves to "do nothing," never "apply anyway."
-- **No official FPL write API.** `ExecutionModule` talks to undocumented
-  endpoints (`users.premierleague.com` login, `/api/my-team/`, `/api/transfers/`).
-  Keep it the most isolated module in the app — nothing else should reach these
-  endpoints or hold the authenticated session.
+- **No official FPL write API.** `AuthModule` (holds `FplAuthClient` and the
+  authenticated session — moved out of `ExecutionModule` 2026-09-08, see
+  "Execution auth" below) and `ExecutionModule` (the one other module allowed
+  to use it directly, for the actual write calls) talk to undocumented
+  endpoints (OIDC login, `/api/my-team/`, `/api/transfers/`). Keep both the
+  most isolated modules in the app — nothing else should reach these
+  endpoints or hold the authenticated session directly; everything else goes
+  through `AuthService`'s narrow status-check surface instead.
 - **Never hardcode a deadline day/time.** Gameweek deadlines shift (blank/double
   gameweeks). Always read the real deadline from `bootstrap-static`.
 - **Trend data is a curated whitelist, not open-ended scraping.** See
@@ -43,8 +47,9 @@ file is the short version for whichever session picks this repo up next.
 | `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), and `POST /proposal/chip` (declare a chip for this week's proposal) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
 | `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:` callbacks only); triggers execution on `APPROVED` |
-| `execution` | implemented for **lineup/captain/transfers/chips** — `FplAuthClient` (OAuth refresh-token flow, see below) + `ExecutionService`. Transfers verified live 2026-09-08; chips still unverified — see below |
-| `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday) |
+| `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers verified live 2026-09-08; chips still unverified — see below |
+| `auth` | implemented (2026-09-08) — holds `FplAuthClient`/the authenticated session (moved out of `ExecutionModule`, see "Execution auth" below); `AuthService.isAuthenticated()`/`assertAuthenticated()` let other modules check/gate on login state; `POST /auth/token` (shared-secret guarded) applies a freshly-captured refresh token to the running instance — the landing spot for `pnpm run auth:login`'s Playwright-assisted capture (`scripts/auth-login.ts`) |
+| `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday); also gates on `AuthService.isAuthenticated()` before generating a proposal — see "Execution auth" below |
 | persistence | implemented — Postgres + TypeORM, see "Persistence" below |
 
 ## Persistence
@@ -82,23 +87,57 @@ Also: if you see `Nest can't resolve dependencies of the TypeOrmCoreModule
 stale `node_modules` from a mid-session version swap, not a real
 incompatibility — `rm -rf node_modules && pnpm install` fixed it here.
 
-### Execution auth — read before touching `FplAuthClient`
+### Execution auth — read before touching `FplAuthClient`/`AuthModule`
 
 FPL's write auth is OIDC via a hosted identity provider (PingOne DaVinci), not
 the old email/password login most third-party writeups describe. The
 interactive login step is bot-guarded (DataDome) and deliberately **not**
-scripted — instead, a long-lived refresh token is captured **manually once**
-from a logged-in browser (`FPL_REFRESH_TOKEN` in `.env`), and
-`FplAuthClient` only ever exchanges it for short-lived access tokens.
+scripted — instead, a long-lived refresh token is obtained from a real,
+human-driven browser login, and `FplAuthClient` only ever exchanges it for
+short-lived access tokens.
 
 **The refresh token goes stale routinely, by design, not as a bug**: FPL's
 identity provider keeps only one active session per account, so any other
 logged-in client (the official mobile app included) refreshing in the
 background invalidates whatever this bot is holding. When that happens,
-`FplAuthClient`/`ExecutionService` fail loudly (a Telegram alert, never
-silently) — the fix is repeating the manual browser capture, not automated
-re-login. Full capture steps and the underlying HTTP contracts are in
-Claude's persistent memory (`fpl-write-api-contract`), not duplicated here.
+`FplAuthClient` fails loudly, and (2026-09-08) the app now actively surfaces
+it rather than just erroring on the next attempted call:
+`DeadlineWatcherService` checks `AuthService.isAuthenticated()` before
+generating a proposal and sends a Telegram prompt if it's not (once per
+outage, not every hourly poll); the manual endpoints
+(`/proposal/generate`, `/team-state/report`, etc.) call
+`AuthService.assertAuthenticated()` up front and return a clear "log back
+in" message instead of a raw error. The fix is always a fresh login, never
+automated re-login (still deliberately unscripted — DataDome).
+
+**Getting a fresh token (2026-09-08 — now semi-automated).** Run `pnpm run
+auth:login` **from your own terminal, not through an agent's shell** — it
+opens a real (headful) browser via Playwright, you log into FPL yourself
+(nothing about the login itself is scripted, so DataDome has no reason to
+care), and once `localStorage` shows the OIDC token the script reads it and
+`POST`s it to the running app's `POST /auth/token` (guarded by a shared
+`AUTH_PUSH_SECRET` — must match between `.env` and the script's own `.env`
+read). `AuthController` applies it via `AuthService.applyRefreshToken()`,
+which also persists it to `.env` immediately (as does every routine
+rotation now — `FplAuthClient.ensureAccessToken()` used to only log a
+warning and lose the rotated token on restart; fixed same day). Verified
+live end-to-end 2026-09-08: script → push → applied → confirmed via both a
+"✅ FPL login updated" Telegram message and a live `/team-state/report`
+call succeeding right after. Falls back to the pre-existing fully-manual
+DevTools capture (`JSON.parse(localStorage.getItem('oidc.user:...')).refresh_token`,
+paste into `.env` by hand) if Playwright isn't available. Full capture
+steps and the underlying HTTP contracts are in Claude's persistent memory
+(`fpl-write-api-contract`), not duplicated here.
+
+**Known limitation — local machine only, revisit at deploy time.**
+`auth:login`'s browser has to run somewhere with a real display, so this
+only works because the bot currently runs on the same machine you're
+sitting at. It will **not** work unmodified once this moves to a headless
+cloud server (CLAUDE.md's deploy TODO, not started) — there's no screen
+there for you to log into. The `/auth/token` push design should still
+work then (point `AUTH_TARGET_URL` at the deployed URL, run the script
+locally, same as today), but this needs re-confirming once a real deploy
+target exists.
 
 **Transfers (step 4) — verified live 2026-09-08 against a disposable test
 account, and the community-library-derived contract was wrong.**

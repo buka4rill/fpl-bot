@@ -14,6 +14,7 @@ import { ApprovalModule } from './approval/approval.module';
 import { ExecutionModule } from './execution/execution.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { TeamStateModule } from './team-state/team-state.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { TeamStateModule } from './team-state/team-state.module';
     ApprovalModule,
     ExecutionModule,
     SchedulerModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

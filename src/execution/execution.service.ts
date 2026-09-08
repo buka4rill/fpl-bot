@@ -2,13 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { FplAuthClient } from './clients/fpl-auth.client';
+import { FplAuthClient } from '../auth/clients/fpl-auth.client';
 import {
   FplChipStatus,
   FplPick,
   FplTransferSubmission,
   FplTransfersState,
-} from './clients/fpl-auth.types';
+} from '../auth/clients/fpl-auth.types';
 import { Proposal, ExecutionLog } from '../common/types/domain.types';
 import { ExecutionLogEntity } from '../persistence/entities/execution-log.entity';
 import { IngestionService } from '../ingestion/ingestion.service';

@@ -3,6 +3,8 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { isAxiosError } from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   FplMyTeam,
   FplPick,
@@ -27,16 +29,18 @@ function sanitizeError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-// The ONLY client in the system allowed to hold an authenticated FPL session.
-// FPL's write auth is OIDC via a hosted identity provider (PingOne DaVinci)
-// as of 2026-09 — see project memory: fpl-write-api-contract. The
-// interactive login step is a bot-guarded, stateful flow (DataDome present)
-// and deliberately isn't scripted here: it's fragile and adversarial, not a
-// stable contract worth maintaining. Instead, a long-lived refresh token is
-// captured manually once (FPL_REFRESH_TOKEN) and this client only ever
-// exchanges it for short-lived access tokens. If the refresh token expires
-// or is revoked, a human must repeat that manual capture — there's no
-// automated re-login path.
+// The ONLY client in the system allowed to hold an authenticated FPL session
+// (AuthModule's whole reason for being isolated from ExecutionModule/every
+// other module — see CLAUDE.md's hard constraints). FPL's write auth is
+// OIDC via a hosted identity provider (PingOne DaVinci) as of 2026-09 — see
+// project memory: fpl-write-api-contract. The interactive login step is a
+// bot-guarded, stateful flow (DataDome present) and deliberately isn't
+// scripted here: it's fragile and adversarial, not a stable contract worth
+// maintaining. Instead, a long-lived refresh token is captured via a real
+// (human-driven) browser login — manually once via DevTools, or via
+// `scripts/auth-login.ts`'s Playwright-assisted capture, which still
+// requires you to actually do the login yourself — and this client only
+// ever exchanges it for short-lived access tokens.
 @Injectable()
 export class FplAuthClient {
   private readonly logger = new Logger(FplAuthClient.name);
@@ -49,6 +53,12 @@ export class FplAuthClient {
   private refreshToken: string;
   private accessToken: string | undefined;
   private accessTokenExpiresAt = 0;
+  // De-dupes concurrent callers hitting an expired cached access token at
+  // the same time — without this, two overlapping refreshes could both fire,
+  // and since the refresh token can rotate on use, the second call risks
+  // using one already rotated away by the first (a latent race that existed
+  // before this field; never actually observed live, hardened proactively).
+  private refreshInFlight: Promise<string> | null = null;
 
   constructor(
     private readonly http: HttpService,
@@ -144,15 +154,62 @@ export class FplAuthClient {
     }
   }
 
+  // Cheap, non-invasive "am I logged in" check — reuses the cached access
+  // token if it's still valid (no network call at all), otherwise attempts
+  // a real refresh and reports whether that succeeded. AuthService exposes
+  // this to the rest of the app so callers can ask *before* attempting a
+  // flow, instead of only finding out via a thrown error mid-flow.
+  async isAuthenticated(): Promise<boolean> {
+    if (this.accessToken && Date.now() < this.accessTokenExpiresAt) {
+      return true;
+    }
+    try {
+      await this.ensureAccessToken();
+      return true;
+    } catch (error) {
+      // sanitizeError() already stripped anything sensitive from this by
+      // the time it gets here — safe to log, and the only way to see why
+      // an auth check failed rather than just knowing that it did.
+      this.logger.warn(`isAuthenticated() check failed: ${String(error)}`);
+      return false;
+    }
+  }
+
+  // Applies a freshly-captured refresh token at runtime — the landing spot
+  // for AuthController's POST /auth/token push (see scripts/auth-login.ts).
+  // Clears the cached access token so the very next call re-derives one
+  // from the new refresh token, rather than serving a stale cached access
+  // token a few more minutes.
+  applyRefreshToken(refreshToken: string): void {
+    this.refreshToken = refreshToken;
+    this.accessToken = undefined;
+    this.accessTokenExpiresAt = 0;
+    this.persistRefreshTokenToEnv(refreshToken);
+    this.logger.log('FPL refresh token updated.');
+  }
+
   private async ensureAccessToken(): Promise<string> {
     if (this.accessToken && Date.now() < this.accessTokenExpiresAt) {
       return this.accessToken;
     }
+    if (this.refreshInFlight) {
+      return this.refreshInFlight;
+    }
+
+    this.refreshInFlight = this.refreshAccessToken();
+    try {
+      return await this.refreshInFlight;
+    } finally {
+      this.refreshInFlight = null;
+    }
+  }
+
+  private async refreshAccessToken(): Promise<string> {
     if (!this.refreshToken) {
       throw new Error(
-        'FPL_REFRESH_TOKEN is not configured — capture one manually from a ' +
-          'logged-in browser session before execution can run (see project ' +
-          'memory: fpl-write-api-contract).',
+        'FPL_REFRESH_TOKEN is not configured — capture one via `pnpm run ' +
+          'auth:login` or manually from a logged-in browser session before ' +
+          'execution can run (see project memory: fpl-write-api-contract).',
       );
     }
 
@@ -177,19 +234,41 @@ export class FplAuthClient {
 
     this.accessToken = data.access_token;
     // The token server may rotate the refresh token on use — carry forward
-    // whichever one comes back so the next refresh doesn't use a stale one.
-    // This only lives in memory (no persistence layer yet, CLAUDE.md); on
-    // restart it reverts to FPL_REFRESH_TOKEN from .env, which may by then
-    // be stale if a rotation happened after the last restart.
+    // whichever one comes back so the next refresh doesn't use a stale one,
+    // and persist it to .env immediately so a restart doesn't lose it (the
+    // exact friction that repeatedly cost a fresh manual capture in
+    // practice before this was added — see project memory
+    // fpl-test-account-for-execution-testing).
     if (data.refresh_token && data.refresh_token !== this.refreshToken) {
       this.refreshToken = data.refresh_token;
-      this.logger.warn(
-        'FPL refresh token rotated — update FPL_REFRESH_TOKEN in .env, or ' +
-          'this instance will need a fresh manual capture after its next restart.',
-      );
+      this.persistRefreshTokenToEnv(this.refreshToken);
     }
     // Small safety margin before the token's real expiry.
     this.accessTokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
     return this.accessToken;
+  }
+
+  // Local-filesystem-only durability: fine for this app's current single-
+  // machine deployment, but a checked-out `.env` won't survive a redeploy
+  // on typical ephemeral-filesystem PaaS hosting (Fly.io, Railway, etc.) —
+  // needs revisiting alongside CLAUDE.md's not-yet-started deploy TODO
+  // (e.g. writing through to the platform's own secrets API instead).
+  // Best-effort: a failure here must never block the access token this
+  // call already successfully obtained.
+  private persistRefreshTokenToEnv(refreshToken: string): void {
+    try {
+      const envPath = path.resolve(process.cwd(), '.env');
+      const content = fs.readFileSync(envPath, 'utf8');
+      const line = `FPL_REFRESH_TOKEN=${refreshToken}`;
+      const updated = /^FPL_REFRESH_TOKEN=.*$/m.test(content)
+        ? content.replace(/^FPL_REFRESH_TOKEN=.*$/m, line)
+        : `${content.replace(/\n$/, '')}\n${line}\n`;
+      fs.writeFileSync(envPath, updated, 'utf8');
+    } catch (error) {
+      this.logger.warn(
+        `Failed to persist refresh token to .env — a restart before the ` +
+          `next rotation will need a fresh capture: ${String(error)}`,
+      );
+    }
   }
 }

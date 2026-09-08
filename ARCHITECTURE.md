@@ -37,16 +37,19 @@ flowchart TB
         ALERT["AlertModule"]
         APPROVAL["ApprovalModule"]
         EXEC["ExecutionModule"]
+        AUTH["AuthModule<br/>(holds the FPL session)"]
         DB[("Postgres<br/>gameweeks, predictions,<br/>proposals, approvals, audit log")]
     end
 
     NOTIFY["Notification channel<br/>(Telegram / email / push)"]
+    LOCALLOGIN["pnpm run auth:login<br/>(local Playwright capture)"]
 
     FPLPUB --> INGEST
     UNDERSTAT --> INGEST
     TRENDS --> TRENDSMOD
     SCHED --> INGEST
     SCHED --> TEAMSTATE
+    SCHED -->|isAuthenticated?| AUTH
     TEAMSTATE --> EXEC
     TEAMSTATE --> ALERT
     TEAMSTATE --> OPT
@@ -61,8 +64,10 @@ flowchart TB
     NOTIFY -->|your reply| APPROVAL
     APPROVAL --> DB
     APPROVAL -->|approved & before deadline| EXEC
-    EXEC --> FPLAUTH
+    EXEC --> AUTH
+    AUTH --> FPLAUTH
     EXEC --> DB
+    LOCALLOGIN -->|POST /auth/token| AUTH
 ```
 
 ---
@@ -80,7 +85,8 @@ flowchart TB
 | **ProposalModule** | Packages the optimizer's output into a `Proposal` record: recommended changes, expected point delta, reasoning summary, and a hit cost if applicable. Persisted with status `PENDING`. |
 | **AlertModule** | Renders the proposal into a human-readable message and sends it through your chosen channel, with an explicit approve/reject/edit action. |
 | **ApprovalModule** | Owns the state machine: `PENDING → APPROVED / REJECTED / EXPIRED`. Only a signed, verifiable response from you moves it out of `PENDING`. If deadline passes with no response, it auto-expires — **the fallback on silence is always "do nothing,"** never "apply anyway." |
-| **ExecutionModule** | The only module allowed to call FPL's authenticated endpoints. Triggered exclusively by an `APPROVED` proposal, re-validates the deadline hasn't passed, applies the change, and writes a full audit record (payload sent, response received, timestamp). |
+| **ExecutionModule** | Triggered exclusively by an `APPROVED` proposal, re-validates the deadline hasn't passed, applies the change, and writes a full audit record (payload sent, response received, timestamp). Uses `FplAuthClient` from `AuthModule` (below) — the one other module allowed to hold the authenticated session directly. |
+| **AuthModule** | Not in the original design — added 2026-09-08. Now the *only* module holding `FplAuthClient`/the authenticated session (moved out of `ExecutionModule` so auth concerns — "are we logged in, how do we get logged in" — are separate from execution concerns — "given a session, apply this proposal"). `AuthService.isAuthenticated()`/`assertAuthenticated()` are the narrow surface everything else uses. `POST /auth/token` (shared-secret guarded) lets `scripts/auth-login.ts`'s Playwright-assisted local login push a freshly-captured token into a running instance — see CLAUDE.md's "Execution auth". |
 
 ---
 
@@ -243,9 +249,11 @@ The actual layout groups some of these under subfolders
 `prediction/strategies/`) and adds directories this sketch didn't
 anticipate: `persistence/` (entities + migrations, one place for the whole
 schema — see §6), `common/` (shared domain types/enums/interfaces used
-across modules), `config/` (typed env config for `@nestjs/config`), and
-`team-state/` (§3's `TeamStateModule`). The real `src/` tree is
-authoritative over this sketch.
+across modules), `config/` (typed env config for `@nestjs/config`),
+`team-state/` (§3's `TeamStateModule`), and `auth/` (§3's `AuthModule` —
+`FplAuthClient` now lives at `auth/clients/`, not `execution/clients/` as
+this sketch's `execution/fpl-auth.client.ts` entry implies). The real
+`src/` tree is authoritative over this sketch.
 
 ---
 

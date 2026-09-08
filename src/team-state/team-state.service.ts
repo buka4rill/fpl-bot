@@ -5,7 +5,7 @@ import { ExecutionService } from '../execution/execution.service';
 import {
   FplChipStatus,
   FplTransfersState,
-} from '../execution/clients/fpl-auth.types';
+} from '../auth/clients/fpl-auth.types';
 
 export interface TeamState {
   freeTransfers: number;

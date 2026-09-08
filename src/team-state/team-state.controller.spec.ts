@@ -2,12 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { TeamStateController } from './team-state.controller';
 import { TeamStateService } from './team-state.service';
 import { IngestionService } from '../ingestion/ingestion.service';
+import { AuthService } from '../auth/auth.service';
 import { Gameweek } from '../common/types/domain.types';
 
 describe('TeamStateController', () => {
   let controller: TeamStateController;
   let teamStateService: { reportTeamState: jest.Mock };
   let ingestionService: { getBootstrapSnapshot: jest.Mock };
+  let authService: { assertAuthenticated: jest.Mock };
 
   const gameweek = (id: number, isNext: boolean): Gameweek => ({
     id,
@@ -29,12 +31,16 @@ describe('TeamStateController', () => {
       reportTeamState: jest.fn().mockResolvedValue(state),
     };
     ingestionService = { getBootstrapSnapshot: jest.fn() };
+    authService = {
+      assertAuthenticated: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [TeamStateController],
       providers: [
         { provide: TeamStateService, useValue: teamStateService },
         { provide: IngestionService, useValue: ingestionService },
+        { provide: AuthService, useValue: authService },
       ],
     }).compile();
 
@@ -61,5 +67,16 @@ describe('TeamStateController', () => {
       'No upcoming gameweek found',
     );
     expect(teamStateService.reportTeamState).not.toHaveBeenCalled();
+  });
+
+  it('checks authentication before doing anything else', async () => {
+    authService.assertAuthenticated.mockRejectedValue(
+      new Error('Not authenticated with FPL'),
+    );
+
+    await expect(controller.triggerReport()).rejects.toThrow(
+      'Not authenticated with FPL',
+    );
+    expect(ingestionService.getBootstrapSnapshot).not.toHaveBeenCalled();
   });
 });

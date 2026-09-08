@@ -7,6 +7,7 @@ import { ExecutionModule } from '../execution/execution.module';
 import { AlertModule } from '../alert/alert.module';
 import { IngestionModule } from '../ingestion/ingestion.module';
 import { TeamStateModule } from '../team-state/team-state.module';
+import { AuthModule } from '../auth/auth.module';
 import { ProposalEntity } from '../persistence/entities/proposal.entity';
 
 @Module({
@@ -17,6 +18,7 @@ import { ProposalEntity } from '../persistence/entities/proposal.entity';
     AlertModule,
     IngestionModule,
     TeamStateModule,
+    AuthModule,
   ],
   controllers: [ProposalController],
   providers: [ProposalService],

@@ -1,12 +1,14 @@
 import { Controller, Post } from '@nestjs/common';
 import { TeamStateService, TeamState } from './team-state.service';
 import { IngestionService } from '../ingestion/ingestion.service';
+import { AuthService } from '../auth/auth.service';
 
 @Controller('team-state')
 export class TeamStateController {
   constructor(
     private readonly teamStateService: TeamStateService,
     private readonly ingestionService: IngestionService,
+    private readonly authService: AuthService,
   ) {}
 
   // Manual trigger for testing: send the team-status report now instead of
@@ -14,6 +16,7 @@ export class TeamStateController {
   // idea as ProposalController's captain-swap override.
   @Post('report')
   async triggerReport(): Promise<{ gameweekId: number; state: TeamState }> {
+    await this.authService.assertAuthenticated();
     const { gameweeks } = await this.ingestionService.getBootstrapSnapshot();
     const targetGameweek = gameweeks.find((gameweek) => gameweek.isNext);
     if (!targetGameweek) {

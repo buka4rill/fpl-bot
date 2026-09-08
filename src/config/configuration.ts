@@ -3,6 +3,9 @@ export interface AppConfig {
     teamId: string;
     refreshToken: string;
   };
+  auth: {
+    pushSecret: string;
+  };
   telegram: {
     botToken: string;
     chatId: string;
@@ -27,6 +30,9 @@ export default (): AppConfig => ({
   fpl: {
     teamId: process.env.FPL_TEAM_ID ?? '',
     refreshToken: process.env.FPL_REFRESH_TOKEN ?? '',
+  },
+  auth: {
+    pushSecret: process.env.AUTH_PUSH_SECRET ?? '',
   },
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN ?? '',

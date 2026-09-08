@@ -10,6 +10,7 @@ import { ProposalService } from '../proposal/proposal.service';
 import { AlertService } from '../alert/alert.service';
 import { ApprovalService } from '../approval/approval.service';
 import { TeamStateService } from '../team-state/team-state.service';
+import { AuthService } from '../auth/auth.service';
 
 // Polls hourly rather than daily (ARCHITECTURE.md's "coarse, e.g. daily"
 // suggestion) so the trigger window is never missed even with a small
@@ -31,6 +32,11 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
   // only atomic point. Resets on restart by design — a restart mid-window
   // is exactly what the DB check now covers.
   private lastClaimedGameweekId: number | undefined;
+  // Tracks whether the "please log in" message has already been sent for
+  // the *current* outage — reset the moment isAuthenticated() succeeds
+  // again, so a stale token doesn't spam the same message every hourly
+  // poll while you're getting around to re-authenticating.
+  private authPromptSent = false;
 
   constructor(
     private readonly ingestionService: IngestionService,
@@ -38,6 +44,7 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
     private readonly alertService: AlertService,
     private readonly approvalService: ApprovalService,
     private readonly teamStateService: TeamStateService,
+    private readonly authService: AuthService,
     private readonly config: ConfigService,
   ) {}
 
@@ -93,6 +100,24 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
     if (alreadyProposed) {
       return;
     }
+
+    // Check auth *before* claiming the gameweek — an unauthenticated
+    // instance shouldn't burn its one claim attempt on a run that can't
+    // possibly succeed. Not claiming means the next poll retries this
+    // exact check for free, same as any other transient blocker.
+    if (!(await this.authService.isAuthenticated())) {
+      if (!this.authPromptSent) {
+        this.authPromptSent = true;
+        this.logger.warn(
+          `Gameweek ${targetGameweek.id} proposal blocked: not authenticated with FPL.`,
+        );
+        await this.alertService.sendMessage(
+          "🔐 Your FPL session has expired. Run `pnpm run auth:login` on your machine to log back in — I'll pick this up automatically once you do.",
+        );
+      }
+      return;
+    }
+    this.authPromptSent = false;
 
     // Claim synchronously, before any further await (see the field's
     // comment) — rolled back on failure so a transient error still gets

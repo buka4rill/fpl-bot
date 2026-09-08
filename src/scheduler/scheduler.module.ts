@@ -5,6 +5,7 @@ import { ProposalModule } from '../proposal/proposal.module';
 import { AlertModule } from '../alert/alert.module';
 import { ApprovalModule } from '../approval/approval.module';
 import { TeamStateModule } from '../team-state/team-state.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { TeamStateModule } from '../team-state/team-state.module';
     AlertModule,
     ApprovalModule,
     TeamStateModule,
+    AuthModule,
   ],
   providers: [DeadlineWatcherService],
 })

@@ -6,6 +6,7 @@ import { ProposalService } from '../proposal/proposal.service';
 import { AlertService } from '../alert/alert.service';
 import { ApprovalService } from '../approval/approval.service';
 import { TeamStateService } from '../team-state/team-state.service';
+import { AuthService } from '../auth/auth.service';
 import {
   Gameweek,
   Player,
@@ -22,11 +23,12 @@ describe('DeadlineWatcherService', () => {
     generateProposal: jest.Mock;
     findByGameweekId: jest.Mock;
   };
-  let alertService: { sendProposal: jest.Mock };
+  let alertService: { sendProposal: jest.Mock; sendMessage: jest.Mock };
   let approvalService: { expireOverdue: jest.Mock };
   let teamStateService: {
     reportTeamState: jest.Mock;
   };
+  let authService: { isAuthenticated: jest.Mock };
   let config: { get: jest.Mock };
 
   const players: Player[] = [
@@ -76,7 +78,7 @@ describe('DeadlineWatcherService', () => {
       generateProposal: jest.fn().mockResolvedValue(proposal),
       findByGameweekId: jest.fn().mockResolvedValue(undefined),
     };
-    alertService = { sendProposal: jest.fn() };
+    alertService = { sendProposal: jest.fn(), sendMessage: jest.fn() };
     approvalService = { expireOverdue: jest.fn() };
     teamStateService = {
       reportTeamState: jest.fn().mockResolvedValue({
@@ -86,6 +88,7 @@ describe('DeadlineWatcherService', () => {
         chips: [],
       }),
     };
+    authService = { isAuthenticated: jest.fn().mockResolvedValue(true) };
     config = { get: jest.fn().mockReturnValue(24) }; // deadlineLeadHours
 
     const module: TestingModule = await Test.createTestingModule({
@@ -96,6 +99,7 @@ describe('DeadlineWatcherService', () => {
         { provide: AlertService, useValue: alertService },
         { provide: ApprovalService, useValue: approvalService },
         { provide: TeamStateService, useValue: teamStateService },
+        { provide: AuthService, useValue: authService },
         { provide: ConfigService, useValue: config },
       ],
     }).compile();
@@ -188,6 +192,40 @@ describe('DeadlineWatcherService', () => {
 
     expect(teamStateService.reportTeamState).toHaveBeenCalledWith(4);
     expect(proposalService.generateProposal).toHaveBeenCalledWith(3);
+  });
+
+  it('blocks proposal generation and prompts once when not authenticated', async () => {
+    authService.isAuthenticated.mockResolvedValue(false);
+    ingestionService.getBootstrapSnapshot.mockResolvedValue({
+      gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
+      players,
+      snapshots,
+    });
+
+    await service.checkDeadline();
+    await service.checkDeadline();
+
+    expect(proposalService.generateProposal).not.toHaveBeenCalled();
+    expect(alertService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(alertService.sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('auth:login'),
+    );
+  });
+
+  it('proceeds normally once authenticated again after being blocked', async () => {
+    authService.isAuthenticated.mockResolvedValueOnce(false);
+    ingestionService.getBootstrapSnapshot.mockResolvedValue({
+      gameweeks: [gameweekWithDeadline(hoursFromNow(12))],
+      players,
+      snapshots,
+    });
+
+    await service.checkDeadline(); // blocked, prompt sent
+    authService.isAuthenticated.mockResolvedValue(true);
+    await service.checkDeadline(); // now authenticated
+
+    expect(alertService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(proposalService.generateProposal).toHaveBeenCalledTimes(1);
   });
 
   it('does not re-propose a gameweek already persisted before a restart', async () => {
