@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { FplAuthClient } from '../auth/clients/fpl-auth.client';
 import {
   FplChipStatus,
+  FplMyTeam,
   FplPick,
   FplTransferSubmission,
   FplTransfersState,
@@ -92,7 +93,7 @@ export class ExecutionService {
         ? proposal.chip
         : null;
 
-    let lineupResult: unknown;
+    let lineupResult: FplMyTeam | { error: string };
     let success = true;
     try {
       lineupResult = await this.fplAuthClient.setLineup(
@@ -103,6 +104,31 @@ export class ExecutionService {
     } catch (error) {
       success = false;
       lineupResult = { error: String(error) };
+    }
+
+    // A clean HTTP response from setLineup/submitTransfers only means FPL
+    // didn't reject the request — confirmed live 2026-09-08 that a declared
+    // chip can be silently dropped rather than rejected (this account's
+    // Free Hit: submitTransfers returned its usual empty-body 200, but the
+    // my-team state setLineup returns straight after still showed
+    // status_for_entry: 'unavailable', played_by_entry: [] for freehit —
+    // exactly the same shape a genuine failure would leave, just without an
+    // error to catch). The one signal that's actually confirmed a chip
+    // landing (Bench Boost/Triple Captain, verified live the same day) is
+    // played_by_entry including this team's own id in the response — so
+    // that's what's checked here for every chip, not just the ones that
+    // route through setLineup's own chip param.
+    let chipConfirmed = true;
+    if (success && proposal.chip !== undefined) {
+      const declaredChipName: string = proposal.chip;
+      chipConfirmed = (lineupResult as FplMyTeam).chips.some(
+        (status) =>
+          status.name === declaredChipName &&
+          status.played_by_entry.includes(teamId),
+      );
+      if (!chipConfirmed) {
+        success = false;
+      }
     }
 
     const log = await this.executionLogRepository.save(
@@ -120,9 +146,11 @@ export class ExecutionService {
       // squad has changed even though this "failed." Say so plainly rather
       // than a generic failure message (CLAUDE.md: fail loudly, never
       // silently, and never understate what actually happened).
-      const message = usesTransferEndpoint
-        ? `Transfers were applied for proposal ${proposal.id}, but setting the final lineup/captain failed — check the FPL app directly. See execution log ${log.id}.`
-        : `Execution failed for proposal ${proposal.id} — see execution log ${log.id}.`;
+      const message = !chipConfirmed
+        ? `Transfers/lineup were applied for proposal ${proposal.id}, but FPL doesn't show the "${proposal.chip}" chip as actually played afterward — it may be unavailable for this account right now (check /status). See execution log ${log.id}.`
+        : usesTransferEndpoint
+          ? `Transfers were applied for proposal ${proposal.id}, but setting the final lineup/captain failed — check the FPL app directly. See execution log ${log.id}.`
+          : `Execution failed for proposal ${proposal.id} — see execution log ${log.id}.`;
       throw new Error(message);
     }
     return log;

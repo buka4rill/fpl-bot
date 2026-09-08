@@ -65,7 +65,9 @@ describe('ExecutionService', () => {
         chips: [],
         transfers: {},
       }),
-      setLineup: jest.fn().mockResolvedValue({ picks: currentPicks }),
+      setLineup: jest
+        .fn()
+        .mockResolvedValue({ picks: currentPicks, chips: [] }),
       submitTransfers: jest.fn().mockResolvedValue({}),
     };
     ingestionService = {
@@ -170,6 +172,17 @@ describe('ExecutionService', () => {
   });
 
   it('activates Bench Boost via the my-team chip field, no transfers call', async () => {
+    fplAuthClient.setLineup.mockResolvedValue({
+      picks: currentPicks,
+      chips: [
+        {
+          name: 'bboost',
+          status_for_entry: 'active',
+          played_by_entry: [6909032],
+        },
+      ],
+    });
+
     const log = await service.apply(
       baseProposal({ chip: FplChip.BENCH_BOOST }),
     );
@@ -184,6 +197,17 @@ describe('ExecutionService', () => {
   });
 
   it('activates Wildcard via /api/transfers/, even with no actual transfers', async () => {
+    fplAuthClient.setLineup.mockResolvedValue({
+      picks: currentPicks,
+      chips: [
+        {
+          name: 'wildcard',
+          status_for_entry: 'active',
+          played_by_entry: [6909032],
+        },
+      ],
+    });
+
     await service.apply(baseProposal({ chip: FplChip.WILDCARD }));
 
     expect(fplAuthClient.submitTransfers).toHaveBeenCalledWith(6909032, 4, [], {
@@ -196,6 +220,53 @@ describe('ExecutionService', () => {
       expect.any(Array),
       null,
     );
+  });
+
+  it('reports failure when a declared chip is not confirmed played afterward (regression — 2026-09-08 Free Hit false positive)', async () => {
+    // Mirrors what was actually observed live: submitTransfers/setLineup
+    // both return cleanly (no thrown error), but the resulting my-team
+    // state still shows the chip unavailable and never played — FPL
+    // silently ignored the chip flag rather than rejecting the request.
+    fplAuthClient.setLineup.mockResolvedValue({
+      picks: currentPicks,
+      chips: [
+        {
+          name: 'freehit',
+          status_for_entry: 'unavailable',
+          played_by_entry: [],
+        },
+      ],
+    });
+
+    await expect(
+      service.apply(baseProposal({ chip: FplChip.FREE_HIT })),
+    ).rejects.toThrow('doesn\'t show the "freehit" chip as actually played');
+
+    expect(executionLogRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false }),
+    );
+  });
+
+  it('confirms a chip via played_by_entry even if status_for_entry is not literally "active"', async () => {
+    // The confirmed string values for team-type chips ('active') and
+    // transfer-type chips (unobserved so far — see fpl-auth.types.ts) may
+    // differ; played_by_entry including this team's own id is the one
+    // signal already confirmed live for a real chip activation, so that's
+    // what's checked, not a specific status string.
+    fplAuthClient.setLineup.mockResolvedValue({
+      picks: currentPicks,
+      chips: [
+        {
+          name: 'freehit',
+          status_for_entry: 'played',
+          played_by_entry: [6909032],
+        },
+      ],
+    });
+
+    const log = await service.apply(baseProposal({ chip: FplChip.FREE_HIT }));
+
+    expect(log.success).toBe(true);
   });
 
   it('aborts before touching lineup when transfer validation fails', async () => {

@@ -305,6 +305,39 @@ right now**; Wildcard/Free Hit likely need the account to get through a
 real deadline with a saved squad first. Re-check via `/team-state/report`
 before assuming either way — this has only been observed once.
 
+**Free Hit tested live via the new `/chip` command 2026-09-08 — still
+blocked, and a real success-detection bug found in the process.** Running
+`/chip freehit` reported `✅ GW4 applied — Free Hit now live on your FPL
+team.`, but a follow-up `/team-state/report` showed `freehit` still
+`status_for_entry: 'unavailable'`, `played_by_entry: []` — unchanged from
+before. Confirmed via the execution log itself: the optimizer found no
+beneficial swaps even with transfers free (`transfers: []`), so
+`submitTransfers` was called with `freehit: true` and an empty transfer
+list; FPL returned its usual empty-body 200 (no error), but the my-team
+state `setLineup` returns straight after still showed the chip never
+played. **FPL silently drops a chip flag it won't honor rather than
+rejecting the request** — the account genuinely still can't play
+Wildcard/Free Hit (consistent with the theory above), but the API gave no
+error to catch, so `ExecutionService.apply` reported success anyway. Bank
+(4.6) and team value (95.4) were unchanged — nothing harmful happened,
+just a false-positive confirmation message.
+
+Fixed same day: `ExecutionService.apply` now verifies a declared chip
+actually landed by checking `played_by_entry` (on the my-team state
+`setLineup` already returns) includes this team's own id, for *every*
+chip — not just the ones that go through `setLineup`'s own `chip` param.
+This is the same signal that already confirmed Bench Boost/Triple Captain
+live (`played_by_entry: [4]`, see above) generalized to cover
+Wildcard/Free Hit's silent-drop failure mode too. When unconfirmed, the
+proposal is now marked failed and the Telegram alert says so explicitly
+(`...doesn't show the "freehit" chip as actually played afterward — it
+may be unavailable for this account right now (check /status)`) instead
+of a false "now live". See the regression tests in
+`execution.service.spec.ts` (`'reports failure when a declared chip is
+not confirmed played afterward'` and the companion test confirming a
+non-`'active'` status string still counts as success as long as
+`played_by_entry` includes the team).
+
 `ChipEvaluatorService` remains a deliberate stub — nothing decides *when*
 a chip is automatically worth playing (a prediction/strategy problem, not
 execution). `POST /proposal/chip` is the manual substitute: "I've decided
