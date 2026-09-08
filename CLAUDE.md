@@ -802,14 +802,31 @@ full `AppModule` including real `TypeOrmModule`, needs a live Postgres,
 and is unmodified `@nestjs/cli` boilerplate not exercised anywhere else in
 this project — revisit if it's ever actually used for something specific.
 
-**CD** (`.github/workflows/deploy.yml`): `workflow_dispatch` only, not
-automatic on merge — a deliberate choice, since a bad deploy here means an
+**CD** (`.github/workflows/deploy.yml`): auto-deploys on every push to
+`main` (2026-09-08, was `workflow_dispatch`-only before this — see below
+for why that's now safe), plus `workflow_dispatch` still there for a
+manual re-run. `FLY_API_TOKEN` is already set as a GitHub repo secret —
+`fly launch` did this automatically (detected the GitHub remote and
+pushed it via `gh`) as part of the first launch below, not something that
+needed doing by hand.
+
+**Branch protection on `main` (2026-09-08)** is what makes auto-deploy on
+push safe, given the repo is **public**: a bad deploy here means an
 autonomous bot pushing bad changes to a real FPL account, not just a
-broken staging site. Run it from the Actions tab once CI is green on the
-commit you want live. `FLY_API_TOKEN` is already set as a GitHub repo
-secret — `fly launch` did this automatically (detected the GitHub remote
-and pushed it via `gh`) as part of the first launch below, not something
-that needed doing by hand.
+broken staging site, so "anyone can open a PR" must never be able to turn
+into "anyone can get it deployed." Public visibility alone does **not**
+grant push access — before this, `buka4rill` was already the only
+collaborator with write access, confirmed live via the GitHub API — but
+branch protection makes that structural rather than incidental (holds even
+if a collaborator is ever added later): `main` now requires a pull request
+with at least 1 approval before merging (stale approvals dismissed on new
+commits), requires the CI `test` check to pass, and blocks force-pushes/
+deletions — with **"enforce for administrators" left off**, so
+`buka4rill` (the repo admin) can still push straight to `main` without
+going through a PR, while anyone else must go through an approved PR.
+`ci.yml` itself was already safe for this — it triggers on plain
+`pull_request` (not `pull_request_target`), so a fork's PR never gets
+repo secrets, checked as part of the same pass.
 
 **`fly launch` gotcha, hit live during the actual launch — watch for this
 if the app is ever relaunched or launched fresh elsewhere:** even with

@@ -1,10 +1,14 @@
 name: Deploy
 
-# Manual trigger only — this bot writes to a real FPL account once a
-# proposal is approved, so a deploy going live is a deliberate action, not
-# a side effect of merging. Run this from the Actions tab after CI is green
-# on the commit you want live.
+# Deploys on every push to main, plus manual re-runs from the Actions tab.
+# Safe as an auto-trigger because main is branch-protected: only a direct
+# push from an admin (buka4rill) or a merge of an approved, admin-reviewed
+# PR can ever land on main in the first place — a push landing here is
+# already the deliberate "make this live" action, not a side effect of
+# someone else's PR.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
