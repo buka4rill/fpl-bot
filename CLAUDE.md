@@ -575,12 +575,18 @@ they land in. Verified live: triggered `POST /team-state/report` against
 the deployed app, confirmed the message arrived from `@FplProdBot`, not
 the dev bot.
 
-**Note — both environments currently point at the same FPL account** (the
-disposable test account used throughout this session's testing, not the
-real account). Only the Telegram side is split so far; revisit whether
-prod should eventually point at the real FPL account once ready to stop
-testing against the disposable one — a separate decision from this bot
-split, not made yet.
+**Decided 2026-09-08: prod stays on the disposable test account for
+now, deliberately** — both environments point at the same account (the
+one used throughout this session's testing, not the real one), and that's
+staying that way rather than switching prod over to the real account
+immediately. Two reasons: it's the safer state (nothing prod does can
+touch the real squad until this is deliberately changed), and — the
+actual driver — running prod 24/7 against the test account starts
+genuinely accumulating the `PlayerSnapshot`/results-report history step 5
+needs, without any risk to the real account while that data builds up.
+Revisit switching prod to the real account once there's enough history to
+start step 5 for real, or whenever the test-account approach stops being
+useful.
 
 **A few real bugs surfaced getting the Docker build working, all fixed
 2026-09-08:**
@@ -701,8 +707,11 @@ Currently at: **step 4's transfer path, Bench Boost, and Triple Captain all
 verified**, only Wildcard/Free Hit still pending (see "Execution auth"
 above for what's blocking it), plus the weekly team-status report, the
 transfer-hit policy fix, and the post-deadline applied-manually check-in
-(all 2026-09-08, see above) on top of persistence. Next: step 5 needs a few
-gameweeks of `PlayerSnapshot` history to accumulate.
+(all 2026-09-08, see above) on top of persistence. Next: step 5 needs a
+few gameweeks of `PlayerSnapshot` history to accumulate — now actually
+happening on its own, since prod runs 24/7 on Fly against the disposable
+test account (see "Deploy" above) rather than only when a local machine
+happened to be running.
 
 ## Open question: keep auto-execution, or go notification-only? (deferred, not decided)
 
