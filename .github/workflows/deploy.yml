@@ -1,21 +1,29 @@
 name: Deploy
 
-# Deploys on every push to main, plus manual re-runs from the Actions tab.
-# Safe as an auto-trigger because main is branch-protected: only a direct
-# push from an admin (buka4rill) or a merge of an approved, admin-reviewed
-# PR can ever land on main in the first place — a push landing here is
-# already the deliberate "make this live" action, not a side effect of
-# someone else's PR.
+# Runs only after the CI workflow finishes on main, gated on CI actually
+# passing (workflow_run, not push — a plain `push:` trigger here would run
+# in parallel with ci.yml with no ordering guarantee, so a broken commit
+# could deploy before its own CI failure was even reported). Plus manual
+# re-runs from the Actions tab. Safe as an auto-trigger because main is
+# branch-protected: only a direct push from an admin (buka4rill) or a merge
+# of an approved, admin-reviewed PR can ever land on main in the first
+# place — this workflow deploys exactly the commit CI validated
+# (github.event.workflow_run.head_sha), not just "whatever's on main now".
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
 

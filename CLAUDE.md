@@ -802,13 +802,30 @@ full `AppModule` including real `TypeOrmModule`, needs a live Postgres,
 and is unmodified `@nestjs/cli` boilerplate not exercised anywhere else in
 this project — revisit if it's ever actually used for something specific.
 
-**CD** (`.github/workflows/deploy.yml`): auto-deploys on every push to
-`main` (2026-09-08, was `workflow_dispatch`-only before this — see below
-for why that's now safe), plus `workflow_dispatch` still there for a
-manual re-run. `FLY_API_TOKEN` is already set as a GitHub repo secret —
-`fly launch` did this automatically (detected the GitHub remote and
-pushed it via `gh`) as part of the first launch below, not something that
-needed doing by hand.
+**CD** (`.github/workflows/deploy.yml`): auto-deploys after a green CI run
+on `main` (2026-09-08, was `workflow_dispatch`-only before this — see
+below for why auto-deploy is now safe), plus `workflow_dispatch` still
+there for a manual re-run. `FLY_API_TOKEN` is already set as a GitHub repo
+secret — `fly launch` did this automatically (detected the GitHub remote
+and pushed it via `gh`) as part of the first launch below, not something
+that needed doing by hand.
+
+**Deploy is gated on CI via `workflow_run`, not a second `push` trigger
+(fixed same day, caught live).** The first version of this triggered
+`deploy.yml` on `push: branches: [main]` directly, same as `ci.yml` —
+looked fine, but the two workflows then run fully in parallel with no
+ordering guarantee, so a commit that fails CI could still finish deploying
+before its own CI failure even shows up (observed live: Deploy completing
+before Test on the same push). Branch protection's required "test" status
+check doesn't help here — it only gates merging a PR, not a direct push,
+which is exactly the auto-deploy path. Fixed by switching the trigger to
+`workflow_run` on the `CI` workflow (`types: [completed]`, `branches:
+[main]`), with the job itself gated on `github.event.workflow_run.conclusion
+== 'success'` (manual `workflow_dispatch` still bypasses this gate, same
+as before — it's an explicit "deploy this known-good commit now"). The
+checkout step pins `ref: github.event.workflow_run.head_sha` rather than
+just `github.ref`, so it deploys the exact commit CI validated, not
+whatever happens to be newest on `main` by the time the Deploy job starts.
 
 **Branch protection on `main` (2026-09-08)** is what makes auto-deploy on
 push safe, given the repo is **public**: a bad deploy here means an
