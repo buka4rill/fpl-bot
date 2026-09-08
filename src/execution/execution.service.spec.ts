@@ -222,11 +222,13 @@ describe('ExecutionService', () => {
     );
   });
 
-  it('reports failure when a declared chip is not confirmed played afterward (regression — 2026-09-08 Free Hit false positive)', async () => {
+  it('reports failure when a declared chip is still not confirmed after retrying (regression — 2026-09-08 Free Hit false positive)', async () => {
     // Mirrors what was actually observed live: submitTransfers/setLineup
     // both return cleanly (no thrown error), but the resulting my-team
     // state still shows the chip unavailable and never played — FPL
     // silently ignored the chip flag rather than rejecting the request.
+    // getMyTeam keeps returning unconfirmed too, through every retry.
+    jest.useFakeTimers();
     fplAuthClient.setLineup.mockResolvedValue({
       picks: currentPicks,
       chips: [
@@ -238,13 +240,73 @@ describe('ExecutionService', () => {
       ],
     });
 
-    await expect(
-      service.apply(baseProposal({ chip: FplChip.FREE_HIT })),
-    ).rejects.toThrow('doesn\'t show the "freehit" chip as actually played');
+    const applyPromise = service.apply(
+      baseProposal({ chip: FplChip.FREE_HIT }),
+    );
+    const assertion = expect(applyPromise).rejects.toThrow(
+      'doesn\'t show the "freehit" chip as actually played',
+    );
+    await jest.runAllTimersAsync();
+    await assertion;
 
     expect(executionLogRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({ success: false }),
     );
+    // submitTransfers' own getMyTeam (Free Hit rides the transfer
+    // endpoint) + apply()'s own (building picks) + one per retry.
+    expect(fplAuthClient.getMyTeam).toHaveBeenCalledTimes(5);
+
+    jest.useRealTimers();
+  });
+
+  it("retries and confirms success when a chip that lagged setLineup's own response shows up played on a later check (regression — 2026-09-08 Bench Boost false negative)", async () => {
+    // Mirrors what was actually observed live: setLineup's own response
+    // still showed the chip unplayed, but FPL's backend had genuinely
+    // already applied it — a fresh getMyTeam call moments later correctly
+    // showed it active. The retry must catch this rather than reporting a
+    // false "execution FAILED" for something that actually succeeded.
+    jest.useFakeTimers();
+    fplAuthClient.setLineup.mockResolvedValue({
+      picks: currentPicks,
+      chips: [
+        {
+          name: 'bboost',
+          status_for_entry: 'unavailable',
+          played_by_entry: [],
+        },
+      ],
+    });
+    fplAuthClient.getMyTeam
+      .mockResolvedValueOnce({
+        picks: currentPicks,
+        picks_last_updated: '',
+        chips: [],
+        transfers: {},
+      }) // initial call in apply(), building picks — irrelevant here
+      .mockResolvedValueOnce({
+        picks: currentPicks,
+        picks_last_updated: '',
+        chips: [
+          {
+            name: 'bboost',
+            status_for_entry: 'active',
+            played_by_entry: [6909032],
+          },
+        ],
+        transfers: {},
+      }); // first retry — confirms it actually landed
+
+    const applyPromise = service.apply(
+      baseProposal({ chip: FplChip.BENCH_BOOST }),
+    );
+    await jest.runAllTimersAsync();
+    const log = await applyPromise;
+
+    expect(log.success).toBe(true);
+    // Initial getMyTeam + exactly one retry, not all three.
+    expect(fplAuthClient.getMyTeam).toHaveBeenCalledTimes(2);
+
+    jest.useRealTimers();
   });
 
   it('confirms a chip via played_by_entry even if status_for_entry is not literally "active"', async () => {

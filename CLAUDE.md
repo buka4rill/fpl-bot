@@ -393,12 +393,45 @@ not confirmed played afterward'` and the companion test confirming a
 non-`'active'` status string still counts as success as long as
 `played_by_entry` includes the team).
 
-`ChipEvaluatorService` remains a deliberate stub — nothing decides *when*
-a chip is automatically worth playing (a prediction/strategy problem, not
-execution). `POST /proposal/chip` is the manual substitute: "I've decided
-to play chip X this week," runs the full optimizer with that chip factored
-in (Wildcard/Free Hit zero out hit cost, including in the ILP itself, not
-just the reported number — see `SquadOptimizerService.optimizeSquad`).
+`POST /proposal/chip` remains the manual "I've decided to play chip X this
+week" path — runs the full optimizer with that chip factored in (Wildcard/
+Free Hit zero out hit cost, including in the ILP itself, not just the
+reported number — see `SquadOptimizerService.optimizeSquad`).
+`ChipEvaluatorService` itself is no longer a stub as of 2026-09-08 — see
+"Open question: single-strategy optimizer..." below for the same-week
+auto-comparison it now does.
+
+**Chip-confirmation false negative found and fixed 2026-09-08 — the
+opposite failure mode from the Free Hit case above.** The very first
+proposal `generateBestProposal` ever picked (Bench Boost, against the
+real disposable test account) was approved and executed, and the Telegram
+alert reported `🚨 execution FAILED — ...doesn't show the "bboost" chip as
+actually played afterward`. A fresh, independent `/team-state/report`
+call moments later showed `bboost: status_for_entry: 'active',
+played_by_entry: [4]` — the chip **had** actually landed; bank/team value
+had shifted too, confirming the transfers went through as well. Root
+cause: the `played_by_entry` check added for the Free Hit bug above reads
+straight off `setLineup`'s own response body, in the same request/response
+cycle as the call that submits the chip — and FPL's backend doesn't always
+finish propagating the chip-active state by the time that response is
+built, so the *immediate* response can still show a chip as unplayed even
+though it genuinely landed. Not a new bug in this session's chip-
+comparison work — `ChipEvaluatorService` picked correctly and submitted
+correctly; the false negative was purely in this older verification
+logic, just newly exposed because today's feature was the first thing to
+trigger a real live chip execution through the auto-comparison path.
+
+Fixed by retrying: if `played_by_entry` doesn't confirm the chip on
+`setLineup`'s own response, `ExecutionService.apply` now waits
+(`CHIP_CONFIRMATION_RETRY_DELAY_MS`, 2s) and re-checks via a fresh
+`getMyTeam` call, up to `CHIP_CONFIRMATION_RETRIES` (3) times, before
+concluding it actually failed — only marking the proposal failed if it's
+still unconfirmed after every retry. See the regression tests in
+`execution.service.spec.ts`: `'reports failure when a declared chip is
+still not confirmed after retrying'` (the genuine-failure case, using fake
+timers to skip the real delay) and `'retries and confirms success when a
+chip that lagged setLineup's own response shows up played on a later
+check'` (the false-negative case this was actually fixed for).
 
 ## Open question: single-strategy optimizer vs. weighing strategies against each other (raised 2026-09-08, not decided)
 

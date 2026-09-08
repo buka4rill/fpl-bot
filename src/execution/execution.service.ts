@@ -35,6 +35,18 @@ export interface TeamStateShape {
 const TRANSFER_CHIPS = new Set([FplChip.WILDCARD, FplChip.FREE_HIT]);
 const MY_TEAM_CHIPS = new Set([FplChip.BENCH_BOOST, FplChip.TRIPLE_CAPTAIN]);
 
+// FPL's setLineup response can lag its own backend — confirmed live
+// 2026-09-08 that a Bench Boost which had genuinely landed still showed
+// unplayed (played_by_entry: []) in that immediate response, while a
+// getMyTeam call moments later correctly showed it active. Re-checking a
+// few times before concluding a chip actually failed avoids reporting a
+// false "execution FAILED" alert for something that actually succeeded.
+const CHIP_CONFIRMATION_RETRIES = 3;
+const CHIP_CONFIRMATION_RETRY_DELAY_MS = 2000;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 // Handles lineup/captain, transfers, and chips (ARCHITECTURE.md §11 build
 // order step 4). The /api/transfers/ contract this relies on was never
 // captured live (unlike /api/my-team/, see project memory
@@ -121,11 +133,24 @@ export class ExecutionService {
     let chipConfirmed = true;
     if (success && proposal.chip !== undefined) {
       const declaredChipName: string = proposal.chip;
-      chipConfirmed = (lineupResult as FplMyTeam).chips.some(
-        (status) =>
-          status.name === declaredChipName &&
-          status.played_by_entry.includes(teamId),
+      chipConfirmed = this.isChipPlayed(
+        (lineupResult as FplMyTeam).chips,
+        declaredChipName,
+        teamId,
       );
+      for (
+        let attempt = 0;
+        !chipConfirmed && attempt < CHIP_CONFIRMATION_RETRIES;
+        attempt++
+      ) {
+        await sleep(CHIP_CONFIRMATION_RETRY_DELAY_MS);
+        const recheck = await this.fplAuthClient.getMyTeam(teamId);
+        chipConfirmed = this.isChipPlayed(
+          recheck.chips,
+          declaredChipName,
+          teamId,
+        );
+      }
       if (!chipConfirmed) {
         success = false;
       }
@@ -154,6 +179,18 @@ export class ExecutionService {
       throw new Error(message);
     }
     return log;
+  }
+
+  private isChipPlayed(
+    chips: FplChipStatus[],
+    declaredChipName: string,
+    teamId: number,
+  ): boolean {
+    return chips.some(
+      (status) =>
+        status.name === declaredChipName &&
+        status.played_by_entry.includes(teamId),
+    );
   }
 
   // Reads your currently-live squad shape (lineup/bench/captaincy) straight
