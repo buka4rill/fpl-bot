@@ -442,6 +442,28 @@ itself is untouched and still has a real, distinct use — reading *any*
 team's public squad without needing to be authenticated as them, which
 the authenticated path can't do.
 
+**That fix immediately exposed a second, more serious bug — fixed same
+day.** With `/propose`'s real optimizer path finally reaching a live
+transfer submission for the first time (every transfer tested before this
+was a single hand-specified pair via `/proposal/manual-transfer`, which
+never exercised the optimizer's own transfer-list construction at all),
+FPL's real `/api/transfers/` rejected the batch outright: `"Element in
+and element out must be of the same type"`. Root cause:
+`SquadOptimizerService.deriveTransfers()` paired sold/bought players
+purely by **array index** — `playersOut.map((playerOutId, i) => ({
+playerOutId, playerInId: playersIn[i] }))` — with no regard for whether
+the two players were even the same position. It happened to produce
+correct pairs in every existing test fixture (sold/bought lists were
+coincidentally in matching order), which is exactly why this had never
+been caught. Confirmed via `bank`/`teamValue` unchanged before/after that
+FPL rejected the *entire* batch atomically — nothing was actually applied
+to the account. Fixed by grouping both lists by position first and
+pairing within each group (squad-position counts are fixed by
+`SquadRules`, so for every position exactly as many players leave as
+arrive) — see the regression test in `squad-optimizer.service.spec.ts`
+that deliberately reorders the fixture to break the "coincidentally
+matching order" case the bug was hiding behind.
+
 ## Weekly team-status report (2026-09-08, replaced same-day)
 
 Originally built as a Telegram Q&A (see git history / the memory this

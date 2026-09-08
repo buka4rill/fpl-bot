@@ -400,6 +400,57 @@ describe('SquadOptimizerService', () => {
       expect(result.hitCost).toBe(8);
     });
 
+    it('pairs transfers by position, not by array order (regression — FPL rejects cross-position pairs)', async () => {
+      // The test above happens to list the sold players (6 DEF, 9 MID) and
+      // bought players (14 DEF, 15 MID) in the same relative order, so a
+      // naive index-based zip would pair them correctly by accident.
+      // Reordering the owned squad here (9 listed before 6) breaks that
+      // coincidence: a naive zip would pair 9 (MID) with 14 (DEF) and 6
+      // (DEF) with 15 (MID) — exactly the "Element in and element out
+      // must be of the same type" rejection FPL's real /api/transfers/
+      // returned live 2026-09-08, the first time the optimizer's own
+      // transfer output (as opposed to a hand-specified single transfer)
+      // actually reached a real submission.
+      const reorderedOwnedSquad: CurrentSquad = {
+        ...ownedSquad,
+        playerIds: [1, 2, 4, 5, 9, 6, 8, 11],
+      };
+      const candidates = [
+        ...players,
+        player(14, Position.DEF, 114),
+        player(15, Position.MID, 115),
+      ];
+      const candidatePredictions = [
+        ...predictions,
+        snapshot(14, 4, 16), // +12 over player 6's 4 pts, same price
+        snapshot(15, 5, 15), // +9 over player 9's 6 pts, same price
+      ];
+      await setup(
+        candidates,
+        candidatePredictions,
+        toyRules,
+        reorderedOwnedSquad,
+        { maxHitsPerWeek: 2 },
+      );
+
+      const result = await service.optimizeSquad(0); // no free transfers
+
+      const positionOf = (playerId: number): Position | undefined =>
+        candidates.find((p) => p.id === playerId)?.position;
+      for (const transfer of result.transfers) {
+        expect(positionOf(transfer.playerOutId)).toBe(
+          positionOf(transfer.playerInId),
+        );
+      }
+      expect(result.transfers).toEqual(
+        expect.arrayContaining([
+          { playerOutId: 6, playerInId: 14 },
+          { playerOutId: 9, playerInId: 15 },
+        ]),
+      );
+      expect(result.transfers).toHaveLength(2);
+    });
+
     it('takes multiple transfers at zero cost under Wildcard, even ones not individually worth a hit', async () => {
       // Two small upgrades (+1 pt each) — not worth a -4 hit each on their
       // own (net -6 combined vs. staying put), but free under Wildcard.

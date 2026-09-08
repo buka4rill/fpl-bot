@@ -112,7 +112,7 @@ export class SquadOptimizerService {
       pointsByPlayerId,
       rules,
     );
-    const transfers = this.deriveTransfers(currentSquad, squad);
+    const transfers = this.deriveTransfers(currentSquad, squad, playerById);
     const hitCost = chipCoversTransferCost
       ? 0
       : Math.max(0, transfers.length - freeTransfers) * POINTS_PER_TRANSFER_HIT;
@@ -228,9 +228,20 @@ export class SquadOptimizerService {
       .map((player) => player.id);
   }
 
+  // Pairs sold/bought players by position, not by array order — FPL's real
+  // /api/transfers/ rejects any pair whose element_in/element_out aren't
+  // the same position ("Element in and element out must be of the same
+  // type", confirmed live 2026-09-08 the first time the optimizer's own
+  // transfer output actually reached a real submission — every transfer
+  // tested before that was a single hand-specified pair via
+  // /proposal/manual-transfer, which never exercised this pairing logic at
+  // all). Squad-position counts are fixed by SquadRules, so for every
+  // position exactly as many players leave as arrive — safe to just zip
+  // within each position group.
   private deriveTransfers(
     currentSquad: CurrentSquad | undefined,
     newSquad: number[],
+    playerById: Map<number, Player>,
   ): TransferPlan[] {
     if (!currentSquad) return [];
 
@@ -241,10 +252,33 @@ export class SquadOptimizerService {
     );
     const playersIn = newSquad.filter((id) => !currentSquadIdSet.has(id));
 
-    return playersOut.map((playerOutId, i) => ({
-      playerOutId,
-      playerInId: playersIn[i],
-    }));
+    const outIdsByPosition = new Map<Position, number[]>();
+    for (const id of playersOut) {
+      const position = playerById.get(id)?.position;
+      if (!position) continue;
+      const ids = outIdsByPosition.get(position) ?? [];
+      ids.push(id);
+      outIdsByPosition.set(position, ids);
+    }
+
+    const transfers: TransferPlan[] = [];
+    for (const playerInId of playersIn) {
+      const position = playerById.get(playerInId)?.position;
+      const playerOutId = position
+        ? outIdsByPosition.get(position)?.shift()
+        : undefined;
+      if (playerOutId === undefined) {
+        // Shouldn't happen — the new squad is position-valid by
+        // construction, so every incoming player's position should have a
+        // matching outgoing one. Fail loudly rather than silently emit a
+        // transfer FPL would reject anyway.
+        throw new Error(
+          `No matching outgoing player found for incoming player ${playerInId} (position ${position ?? 'unknown'}) — cannot build a position-valid transfer list.`,
+        );
+      }
+      transfers.push({ playerOutId, playerInId });
+    }
+    return transfers;
   }
 
   // Stage 2 — given the fixed 15-man squad, find the best valid starting XI.
