@@ -10,6 +10,7 @@ import {
   TransferPlan,
 } from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
+import { FplChip } from '../common/enums/chip.enum';
 
 export interface SquadOptimizationResult {
   targetGameweek: Gameweek;
@@ -48,7 +49,15 @@ export class SquadOptimizerService {
   // `freeTransfers` can't be read from the public API (see CurrentSquad's
   // doc comment) — defaults to the standard weekly amount. Pass the real
   // number if you know it (e.g. from the FPL app) for an accurate hit cost.
-  async optimizeSquad(freeTransfers = 1): Promise<SquadOptimizationResult> {
+  // `chip` only affects the hit-cost formula here: Wildcard/Free Hit make
+  // transfers free that week regardless of count. It doesn't change the
+  // budget/constraints (Wildcard doesn't grant extra budget — still bank +
+  // squad value) or need any "reverts next week" handling for Free Hit,
+  // since this app is stateless about squad and always reads live from FPL.
+  async optimizeSquad(
+    freeTransfers = 1,
+    chip?: FplChip,
+  ): Promise<SquadOptimizationResult> {
     const { players, rules, targetGameweek, currentSquad, predictions } =
       await this.predictionService.predictGameweek();
 
@@ -57,12 +66,24 @@ export class SquadOptimizerService {
       predictions.map((p) => [p.playerId, p.predictedPoints ?? 0]),
     );
 
+    // Under Wildcard/Free Hit, transfers are free regardless of count — the
+    // ILP itself must know this too, not just the reported hitCost below,
+    // otherwise it still penalizes "excess" transfers internally and
+    // shies away from the full rebuild these chips are for. squadSize is a
+    // safe stand-in for "unlimited": you can't transfer more players than
+    // you own.
+    const chipCoversTransferCost =
+      chip === FplChip.WILDCARD || chip === FplChip.FREE_HIT;
+    const effectiveFreeTransfers = chipCoversTransferCost
+      ? rules.squadSize
+      : freeTransfers;
+
     const squad = this.selectSquad(
       players,
       predictions,
       rules,
       currentSquad,
-      freeTransfers,
+      effectiveFreeTransfers,
     );
     const lineup = this.selectStartingLineup(
       squad,
@@ -71,8 +92,9 @@ export class SquadOptimizerService {
       rules,
     );
     const transfers = this.deriveTransfers(currentSquad, squad);
-    const hitCost =
-      Math.max(0, transfers.length - freeTransfers) * POINTS_PER_TRANSFER_HIT;
+    const hitCost = chipCoversTransferCost
+      ? 0
+      : Math.max(0, transfers.length - freeTransfers) * POINTS_PER_TRANSFER_HIT;
 
     return { targetGameweek, squad, transfers, hitCost, ...lineup };
   }

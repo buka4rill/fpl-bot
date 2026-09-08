@@ -28,3 +28,25 @@ export interface FplTokenResponse {
   scope: string;
   id_token: string;
 }
+
+// POST /api/transfers/ — never captured live (unlike everything else in
+// this file), sourced from amosbastian/fpl's fpl/models/user.py (an
+// actively-maintained community library, see ARCHITECTURE.md's Sources),
+// not a guess. Needs live confirmation the first time this actually runs
+// against a real transfer. Response shape is genuinely unknown — treated
+// as `unknown` at the call site rather than typed here.
+export interface FplTransferSubmission {
+  element_in: number;
+  element_out: number;
+  purchase_price: number;
+  selling_price: number;
+}
+
+export interface FplTransferPayload {
+  confirmed: boolean;
+  entry: number;
+  event: number;
+  transfers: FplTransferSubmission[];
+  wildcard: boolean;
+  freehit: boolean;
+}

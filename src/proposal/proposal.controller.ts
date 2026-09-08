@@ -1,10 +1,11 @@
-import { Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ProposalService } from './proposal.service';
 import { ExecutionService } from '../execution/execution.service';
 import { AlertService } from '../alert/alert.service';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { Proposal } from '../common/types/domain.types';
+import { FplChip } from '../common/enums/chip.enum';
 
 @Controller('proposal')
 export class ProposalController {
@@ -48,6 +49,30 @@ export class ProposalController {
       expectedGain: 0,
       hitCost: 0,
     });
+
+    await this.alertService.sendProposal(proposal, players, snapshots);
+    return { proposalId: proposal.id };
+  }
+
+  // Manual chip declaration: "I've decided to play this chip this week."
+  // Nothing decides chip timing automatically yet (ChipEvaluatorService is
+  // still a stub — that's a separate strategy problem) — this runs the
+  // real optimizer with the chip factored in (Wildcard/Free Hit make
+  // transfers free that week) rather than just keeping the current squad
+  // as-is, since a chip decision should get the full recommendation. Still
+  // goes through the normal Telegram approve/reject gate before execution.
+  @Post('chip')
+  async proposeChip(
+    @Body() body: { chip: FplChip; freeTransfers?: number },
+  ): Promise<{ proposalId: string }> {
+    if (!Object.values(FplChip).includes(body.chip)) {
+      throw new Error(`Unknown chip: ${String(body.chip)}`);
+    }
+
+    const [proposal, { players, snapshots }] = await Promise.all([
+      this.proposalService.generateProposal(body.freeTransfers, body.chip),
+      this.ingestionService.getBootstrapSnapshot(),
+    ]);
 
     await this.alertService.sendProposal(proposal, players, snapshots);
     return { proposalId: proposal.id };

@@ -6,6 +6,7 @@ import { SquadOptimizerService } from '../optimization/squad-optimizer.service';
 import { Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { ProposalEntity } from '../persistence/entities/proposal.entity';
+import { FplChip } from '../common/enums/chip.enum';
 
 @Injectable()
 export class ProposalService {
@@ -17,10 +18,17 @@ export class ProposalService {
 
   // `freeTransfers` can't be derived from the public API (see CurrentSquad's
   // doc comment) — passed through to SquadOptimizerService, which defaults
-  // it to the standard weekly amount if not given.
-  async generateProposal(freeTransfers?: number): Promise<Proposal> {
-    const optimization =
-      await this.squadOptimizerService.optimizeSquad(freeTransfers);
+  // it to the standard weekly amount if not given. `chip` is a manual
+  // declaration ("I've decided to play this chip this week") — nothing
+  // currently decides this automatically (ChipEvaluatorService is a stub).
+  async generateProposal(
+    freeTransfers?: number,
+    chip?: FplChip,
+  ): Promise<Proposal> {
+    const optimization = await this.squadOptimizerService.optimizeSquad(
+      freeTransfers,
+      chip,
+    );
 
     return this.store({
       gameweekId: optimization.targetGameweek.id,
@@ -31,6 +39,7 @@ export class ProposalService {
       benchOutfieldIds: optimization.benchOutfieldIds,
       captainId: optimization.captainId,
       viceCaptainId: optimization.viceCaptainId,
+      chip,
       // Net of hit cost — "how many more points is this plan expected to
       // earn." Not a delta against the current squad's own predicted points
       // (that would need re-running the lineup selection on the unchanged

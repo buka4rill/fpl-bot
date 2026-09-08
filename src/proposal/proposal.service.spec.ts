@@ -5,6 +5,7 @@ import { SquadOptimizerService } from '../optimization/squad-optimizer.service';
 import { SquadOptimizationResult } from '../optimization/squad-optimizer.service';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { ProposalEntity } from '../persistence/entities/proposal.entity';
+import { FplChip } from '../common/enums/chip.enum';
 
 // Minimal in-memory stand-in for Repository<ProposalEntity>, covering only
 // the methods ProposalService actually calls — mirrors the real Postgres
@@ -162,6 +163,19 @@ describe('ProposalService', () => {
   it('passes freeTransfers through to the optimizer', async () => {
     await service.generateProposal(2);
 
-    expect(squadOptimizerService.optimizeSquad).toHaveBeenCalledWith(2);
+    expect(squadOptimizerService.optimizeSquad).toHaveBeenCalledWith(
+      2,
+      undefined,
+    );
+  });
+
+  it('passes a chip through to the optimizer and onto the stored proposal', async () => {
+    const proposal = await service.generateProposal(1, FplChip.WILDCARD);
+
+    expect(squadOptimizerService.optimizeSquad).toHaveBeenCalledWith(
+      1,
+      FplChip.WILDCARD,
+    );
+    expect(proposal.chip).toBe(FplChip.WILDCARD);
   });
 });

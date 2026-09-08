@@ -3,7 +3,14 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { isAxiosError } from 'axios';
-import { FplMyTeam, FplPick, FplTokenResponse } from './fpl-auth.types';
+import {
+  FplMyTeam,
+  FplPick,
+  FplTokenResponse,
+  FplTransferPayload,
+  FplTransferSubmission,
+} from './fpl-auth.types';
+import { FplChip } from '../../common/enums/chip.enum';
 
 // Axios errors carry the full request (headers, body) on `.config` — for
 // every call this client makes, that includes either the refresh token or
@@ -64,14 +71,72 @@ export class FplAuthClient {
     }
   }
 
-  async setLineup(teamId: number, picks: FplPick[]): Promise<FplMyTeam> {
+  async setLineup(
+    teamId: number,
+    picks: FplPick[],
+    chip: FplChip | null = null,
+  ): Promise<FplMyTeam> {
     const accessToken = await this.ensureAccessToken();
     try {
       const { data } = await firstValueFrom(
         this.http.post<FplMyTeam>(
           `${this.apiBase}/my-team/${teamId}/`,
-          { picks },
+          { chip, picks },
           { headers: { Authorization: `Bearer ${accessToken}` } },
+        ),
+      );
+      return data;
+    } catch (error) {
+      throw sanitizeError(error);
+    }
+  }
+
+  // POST /api/transfers/ — see fpl-auth.types.ts: sourced from a community
+  // library, not captured live. Mirrors that library's dry-run-then-commit
+  // pattern: FPL validates the transfer with `confirmed: false` first
+  // (returns errors without applying anything), and only the second,
+  // `confirmed: true` call actually submits it. `submissions` can be an
+  // empty array with a chip flag set — that's how Wildcard/Free Hit get
+  // activated on a week with no actual transfers.
+  async submitTransfers(
+    teamId: number,
+    gameweekId: number,
+    submissions: FplTransferSubmission[],
+    chip: { wildcard: boolean; freehit: boolean },
+  ): Promise<unknown> {
+    const accessToken = await this.ensureAccessToken();
+    const payload: FplTransferPayload = {
+      confirmed: false,
+      entry: teamId,
+      event: gameweekId,
+      transfers: submissions,
+      wildcard: chip.wildcard,
+      freehit: chip.freehit,
+    };
+    const headers = { Authorization: `Bearer ${accessToken}` };
+
+    try {
+      const { data: dryRunResult } = await firstValueFrom(
+        this.http.post<unknown>(`${this.apiBase}/transfers/`, payload, {
+          headers,
+        }),
+      );
+      const hasErrors =
+        dryRunResult !== null &&
+        dryRunResult !== undefined &&
+        (typeof dryRunResult !== 'object' ||
+          Object.keys(dryRunResult).length > 0);
+      if (hasErrors) {
+        throw new Error(
+          `Transfer validation failed: ${JSON.stringify(dryRunResult)}`,
+        );
+      }
+
+      const { data } = await firstValueFrom(
+        this.http.post<unknown>(
+          `${this.apiBase}/transfers/`,
+          { ...payload, confirmed: true },
+          { headers },
         ),
       );
       return data;

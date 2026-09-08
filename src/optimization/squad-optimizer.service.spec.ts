@@ -9,6 +9,7 @@ import {
   SquadRules,
 } from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
+import { FplChip } from '../common/enums/chip.enum';
 
 describe('SquadOptimizerService', () => {
   let service: SquadOptimizerService;
@@ -299,6 +300,29 @@ describe('SquadOptimizerService', () => {
       expect(result.squad).not.toContain(6);
       expect(result.transfers).toEqual([{ playerOutId: 6, playerInId: 14 }]);
       expect(result.hitCost).toBe(4);
+    });
+
+    it('takes multiple transfers at zero cost under Wildcard, even ones not individually worth a hit', async () => {
+      // Two small upgrades (+1 pt each) — not worth a -4 hit each on their
+      // own (net -6 combined vs. staying put), but free under Wildcard.
+      const candidates = [
+        ...players,
+        player(14, Position.DEF, 114),
+        player(15, Position.MID, 115),
+      ];
+      const candidatePredictions = [
+        ...predictions,
+        snapshot(14, 4, 5), // +1 over player 6's 4 pts, same price
+        snapshot(15, 5, 7), // +1 over player 9's 6 pts, same price
+      ];
+      await setup(candidates, candidatePredictions, toyRules, ownedSquad);
+
+      const result = await service.optimizeSquad(0, FplChip.WILDCARD);
+
+      expect(result.squad).toEqual(expect.arrayContaining([14, 15]));
+      expect(result.squad).not.toContain(6);
+      expect(result.squad).not.toContain(9);
+      expect(result.hitCost).toBe(0);
     });
 
     it('does not charge a hit for a transfer within the free allowance', async () => {

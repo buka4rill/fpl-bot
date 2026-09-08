@@ -8,10 +8,16 @@ import { ExecutionLog, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { FplChip } from '../common/enums/chip.enum';
 import { ExecutionLogEntity } from '../persistence/entities/execution-log.entity';
+import { IngestionService } from '../ingestion/ingestion.service';
 
 describe('ExecutionService', () => {
   let service: ExecutionService;
-  let fplAuthClient: { getMyTeam: jest.Mock; setLineup: jest.Mock };
+  let fplAuthClient: {
+    getMyTeam: jest.Mock;
+    setLineup: jest.Mock;
+    submitTransfers: jest.Mock;
+  };
+  let ingestionService: { getBootstrapSnapshot: jest.Mock };
   let executionLogRepository: { create: jest.Mock; save: jest.Mock };
 
   const pick = (
@@ -59,6 +65,12 @@ describe('ExecutionService', () => {
         transfers: {},
       }),
       setLineup: jest.fn().mockResolvedValue({ picks: currentPicks }),
+      submitTransfers: jest.fn().mockResolvedValue({}),
+    };
+    ingestionService = {
+      getBootstrapSnapshot: jest.fn().mockResolvedValue({
+        snapshots: [{ gameweekId: 4, playerId: 99, price: 7.5 }],
+      }),
     };
     executionLogRepository = {
       create: jest.fn((log: ExecutionLog) => log),
@@ -73,6 +85,7 @@ describe('ExecutionService', () => {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('6909032') },
         },
+        { provide: IngestionService, useValue: ingestionService },
         {
           provide: getRepositoryToken(ExecutionLogEntity),
           useValue: executionLogRepository,
@@ -103,6 +116,7 @@ describe('ExecutionService', () => {
         }),
         expect.objectContaining({ element: 12, multiplier: 0, position: 12 }),
       ]),
+      null,
     );
     expect(log.success).toBe(true);
     expect(log.proposalId).toBe('p1');
@@ -118,20 +132,101 @@ describe('ExecutionService', () => {
     expect(fplAuthClient.setLineup).not.toHaveBeenCalled();
   });
 
-  it('refuses proposals that include transfers', async () => {
+  it('submits transfers via /api/transfers/, then sets the resulting lineup', async () => {
+    // Post-transfer squad: player 15 sold, player 99 bought.
+    const postTransferPicks = currentPicks.map((p) =>
+      p.element === 15 ? pick(99) : p,
+    );
+    fplAuthClient.getMyTeam
+      .mockResolvedValueOnce({ picks: currentPicks }) // pre-transfer (selling price lookup)
+      .mockResolvedValueOnce({ picks: postTransferPicks }); // post-transfer (lineup build)
+
+    const proposal = baseProposal({
+      transfers: [{ playerOutId: 15, playerInId: 99 }],
+      benchOutfieldIds: [13, 14, 99],
+    });
+    const log = await service.apply(proposal);
+
+    expect(fplAuthClient.submitTransfers).toHaveBeenCalledWith(
+      6909032,
+      4,
+      [
+        {
+          element_out: 15,
+          element_in: 99,
+          selling_price: 50,
+          purchase_price: 75,
+        },
+      ],
+      { wildcard: false, freehit: false },
+    );
+    expect(fplAuthClient.setLineup).toHaveBeenCalledWith(
+      6909032,
+      expect.arrayContaining([expect.objectContaining({ element: 99 })]),
+      null,
+    );
+    expect(log.success).toBe(true);
+  });
+
+  it('activates Bench Boost via the my-team chip field, no transfers call', async () => {
+    const log = await service.apply(
+      baseProposal({ chip: FplChip.BENCH_BOOST }),
+    );
+
+    expect(fplAuthClient.submitTransfers).not.toHaveBeenCalled();
+    expect(fplAuthClient.setLineup).toHaveBeenCalledWith(
+      6909032,
+      expect.any(Array),
+      FplChip.BENCH_BOOST,
+    );
+    expect(log.success).toBe(true);
+  });
+
+  it('activates Wildcard via /api/transfers/, even with no actual transfers', async () => {
+    await service.apply(baseProposal({ chip: FplChip.WILDCARD }));
+
+    expect(fplAuthClient.submitTransfers).toHaveBeenCalledWith(6909032, 4, [], {
+      wildcard: true,
+      freehit: false,
+    });
+    // Wildcard rides the transfers endpoint, not the my-team chip field.
+    expect(fplAuthClient.setLineup).toHaveBeenCalledWith(
+      6909032,
+      expect.any(Array),
+      null,
+    );
+  });
+
+  it('aborts before touching lineup when transfer validation fails', async () => {
+    fplAuthClient.submitTransfers.mockRejectedValue(
+      new Error('Transfer validation failed: budget exceeded'),
+    );
+
     await expect(
       service.apply(
-        baseProposal({ transfers: [{ playerOutId: 1, playerInId: 99 }] }),
+        baseProposal({ transfers: [{ playerOutId: 15, playerInId: 99 }] }),
       ),
-    ).rejects.toThrow('transfers');
+    ).rejects.toThrow('Transfer submission failed');
     expect(fplAuthClient.setLineup).not.toHaveBeenCalled();
   });
 
-  it('refuses proposals that play a chip', async () => {
+  it('reports a partial failure plainly when transfers apply but the lineup call fails', async () => {
+    fplAuthClient.setLineup.mockRejectedValue(new Error('FPL API 500'));
+
     await expect(
-      service.apply(baseProposal({ chip: FplChip.WILDCARD })),
-    ).rejects.toThrow('chip');
-    expect(fplAuthClient.setLineup).not.toHaveBeenCalled();
+      service.apply(
+        baseProposal({ transfers: [{ playerOutId: 15, playerInId: 99 }] }),
+      ),
+    ).rejects.toThrow('Transfers were applied');
+    expect(executionLogRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        responsePayload: {
+          transfersResult: {},
+          lineupResult: { error: 'Error: FPL API 500' },
+        },
+      }),
+    );
   });
 
   it('throws if the proposal does not account for every owned player', async () => {
