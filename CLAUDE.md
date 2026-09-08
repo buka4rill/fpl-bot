@@ -122,6 +122,40 @@ to play chip X this week," runs the full optimizer with that chip factored
 in (Wildcard/Free Hit zero out hit cost, including in the ILP itself, not
 just the reported number — see `SquadOptimizerService.optimizeSquad`).
 
+## Open question: single-strategy optimizer vs. weighing strategies against each other (raised 2026-09-08, not decided)
+
+Even with the transfer-hit policy fix above, `SquadOptimizerService` still
+only ever answers one question: "given N free transfers, what's the best
+squad?" It treats free transfers as a budget to spend, not a decision —
+any swap that clears the profitability bar gets taken, up to
+`maxHitsPerWeek`/`freeTransfers`, with no option to deliberately use fewer
+than all of them (banking transfers has real future value FPL rewards, up
+to its own cap, which the optimizer doesn't model at all). And chips are
+never in the running unless manually declared via `POST /proposal/chip` —
+the optimizer never compares "N transfers with the current chip-free plan"
+against "play Wildcard and rebuild," "play Bench Boost with this bench,"
+or "play Triple Captain on this pick" as competing strategies for the same
+gameweek and recommends whichever is actually best.
+
+What's really being asked for: evaluate multiple candidate strategies per
+gameweek (no transfers / partial transfers / full free transfers / a hit /
+each available chip) on predicted point outcomes — including hold value for
+banked transfers, and ideally informed by `TrendsModule` data (still not
+consumed anywhere) for things like upcoming fixture swings or double/blank
+gameweeks that change a chip's timing value — and surface the best one,
+not just the single plan the ILP happens to produce today.
+
+This is a genuinely bigger feature than a tuning fix: it touches
+`SquadOptimizerService`, `ChipEvaluatorService` (this is likely what it was
+always meant to grow into, scoped wider — not just "when to auto-play a
+chip" but "which whole strategy, chip included, wins this week"),
+`TrendsModule`, and probably `ProposalService`/`AlertService` if the answer
+is "show the top strategy, not silently discard the runners-up." Not
+started — needs its own design pass (probably its own plan-mode session)
+rather than a quick change, given how many modules it touches and how many
+real modeling decisions it involves (how to price "hold value," how to
+compare a chip's one-time payoff against an ongoing transfer plan, etc.).
+
 For local webhook testing (tapping Approve/Reject against a real Telegram
 callback), `pnpm run dev:webhook` automates the tunnel + webhook wiring —
 see `scripts/dev-webhook.ts`.
