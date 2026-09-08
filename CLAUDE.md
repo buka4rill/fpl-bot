@@ -556,6 +556,48 @@ existing tests asserting `decide` was called with exactly 3 arguments,
 since Jest's `toHaveBeenCalledWith` treats a trailing explicit `undefined`
 as a real 4th argument, not the same as omitting it.
 
+**Live-testing the above surfaced a real prediction-calibration problem —
+not a bug, a modeling issue (2026-09-08).** The first real chip proposal
+generated after this feature shipped reported `expectedGain: 175.47`
+(Bench Boost) / `143.98` (the persisted no-chip alternative) — implausible
+for a single gameweek; a genuinely elite live captain haul tops out around
+20-24 points, let alone a whole-squad average outcome. Verified this
+wasn't an arithmetic bug: hand-recomputing `HeuristicStrategy`'s exact
+formula against live `bootstrap-static` data for the real 11-man lineup +
+bench reproduced `175.47`/`143.98` to the cent — the code does exactly
+what it's defined to do. The problem is the definition itself, three
+things compounding:
+1. FPL's own `form` field (recent average points/match) can already sit
+   at 8-9+ for an early-season player on a small-sample hot streak — close
+   to a season-best return, not a typical one, before any bonus is added.
+2. The underlying-stats bonus (xG/xA) and defensive-contribution bonus
+   both add on top of `form`, but a player with elevated `form` right now
+   is often elevated *because of* those same good underlying/defensive
+   numbers — double-counting the same "this player's been great" signal
+   rather than correcting for luck, which was the xG bonus's original
+   intent.
+3. The fixture multiplier (up to 1.67× for the easiest fixtures) is
+   multiplicative on top of that already-inflated base, amplifying any
+   overestimate from (1)/(2) rather than gently adjusting it.
+   `HeuristicStrategy.score()`, live example (Gakpo, the captain in this
+   proposal): `(form 9.3 + underlying 1.12 + dc 1.5) × fixtureMult 1.33 =
+   15.9` predicted points for one gameweek, on its own.
+
+Directly undermines `chipRiskPremium` as a guardrail: an 8-point bar is
+trivial to clear when the underlying numbers are inflated by this much,
+so the guardrail added earlier today is weaker in practice than its
+design intended. This is the "hand-tuned linear heuristic... weights are
+reasonable guesses, not backtested" risk called out in
+`HeuristicStrategy`'s own header comment, no longer theoretical — a
+concrete, live demonstration of why every chip/hit/timing guardrail built
+on top of this model is only as trustworthy as the model itself, which
+remains unvalidated. Deliberately not patched with another guessed
+constant (e.g. capping a player's predicted points at some ceiling) —
+that repeats the same mistake with a different number. Real fix is the
+same backtesting prerequisite already on record elsewhere in this file
+(`ResultsService` reaching a half-season of predicted-vs-actual history)
+before touching these weights with any confidence.
+
 **Still not started — the genuinely hard part**: timing/hold value
 (comparing this week's Wildcard against holding for a better week) and
 `TrendsModule` integration. Investigated live while scoping the above:
