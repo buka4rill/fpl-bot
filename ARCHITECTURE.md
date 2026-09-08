@@ -307,7 +307,9 @@ this sketch.
 
 Current status (checkmarks, what's next, open questions) is tracked live in
 `CLAUDE.md`'s "Build order" section, not duplicated here — this is the
-original plan as sketched.
+original plan as sketched. Concrete next steps are also tracked as GitHub
+issues (filed 2026-09-09,
+[#2](https://github.com/buka4rill/fpl-bot/issues/2)–[#7](https://github.com/buka4rill/fpl-bot/issues/7)).
 
 1. **Ingestion + prediction + optimization, recommend-only.** No execution module at all yet — just get a weekly Telegram message with a proposed team and confidence you'd actually want to send it.
 2. **Add the approval state machine and alert loop**, still without execution — verify the "propose → you decide → expire on silence" flow end-to-end.

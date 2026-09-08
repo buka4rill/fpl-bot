@@ -248,6 +248,81 @@ message asking you to run `auth:login` rather than failing silently.
   but the repo admin can still push directly. See `CLAUDE.md`'s "Deploy
   (Fly.io) + CI/CD" section for the full history and reasoning.
 
+## Production (Fly.io)
+
+The deployed instance is app `fpl-bot-buka4rill`
+(`https://fpl-bot-buka4rill.fly.dev`), Postgres cluster
+`fpl-bot-buka4rill-db`. See `CLAUDE.md`'s "Deploy (Fly.io) + CI/CD" section
+for the full setup history and reasoning — this is just the day-to-day
+commands worth remembering.
+
+**`flyctl` not found in your shell?** The Windows installer
+(`iwr https://fly.io/install.ps1 -useb | iex`) puts it at
+`~/.fly/bin/flyctl.exe` and updates the user `PATH`, but that only takes
+effect in *new* shells — a terminal already open when you installed it
+(or a different shell type than whichever one got updated) still won't
+find it. Either open a new terminal, or call it directly:
+
+```bash
+"$HOME/.fly/bin/flyctl" version
+```
+
+**Checking on the app:**
+
+```bash
+fly status -a fpl-bot-buka4rill        # is it up, how many machines
+fly logs -a fpl-bot-buka4rill          # tail live logs
+fly secrets list -a fpl-bot-buka4rill  # secret names only, not values
+```
+
+**Querying the production database** (e.g. to check real backtesting
+progress toward step 5's data checkpoint — see `CLAUDE.md`'s "Build
+order"):
+
+```bash
+fly postgres connect -a fpl-bot-buka4rill-db
+```
+
+This drops you into the `postgres` database, **not** the app's own
+`fpl_bot_buka4rill` — the app's tables (`proposals`, `player_snapshots`,
+etc.) live there instead:
+
+```sql
+\l                        -- list databases, confirm the real name
+\c fpl_bot_buka4rill      -- switch into it
+\dt                       -- list tables
+```
+
+Then, e.g., to check how many gameweeks have a completed predicted-vs-actual
+results report (the step-5 gate):
+
+```sql
+SELECT count(DISTINCT (season, "gameweekId")) FROM proposals WHERE "resultReportedAt" IS NOT NULL;
+```
+
+Or to see recent proposal activity:
+
+```sql
+SELECT season, "gameweekId", status, "createdAt" FROM proposals ORDER BY "createdAt" DESC LIMIT 10;
+```
+
+`\q` to exit.
+
+**Manual redeploy** (normally automatic after CI passes on `main` — see
+[CI / CD](#ci--cd) above):
+
+```bash
+fly deploy -a fpl-bot-buka4rill
+```
+
+**Re-authenticating the deployed instance** — same `pnpm run auth:login`
+flow as local dev, just pointed at the deployed URL: set
+`AUTH_TARGET_URL=https://fpl-bot-buka4rill.fly.dev` in your local `.env`
+before running it (only needed when the deployed token actually goes
+stale — see [Auth: capturing/refreshing the
+token](#auth-capturingrefreshing-the-token) above for why that happens
+routinely).
+
 ## Notes
 
 - First `pnpm install` may print `Ignored build scripts: ...` — run

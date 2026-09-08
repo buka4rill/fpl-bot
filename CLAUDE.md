@@ -654,6 +654,12 @@ recommend, don't act on it yet) until the backtesting checkpoint
 validates it, the same idea `ResultsModule` already applies to tracking
 overall prediction accuracy without gating anything on it.
 
+Tracked as [issue #4](https://github.com/buka4rill/fpl-bot/issues/4)
+(filed 2026-09-09), sequenced after
+[#3](https://github.com/buka4rill/fpl-bot/issues/3)'s weight
+recalibration — see "Currently at" under "Build order" below for the
+concrete calendar projection of when that checkpoint actually lands.
+
 For local webhook testing (tapping Approve/Reject against a real Telegram
 callback), `pnpm run dev:webhook` automates the tunnel + webhook wiring —
 see `scripts/dev-webhook.ts`.
@@ -1198,6 +1204,26 @@ Revisit the deferred **auto-execution vs. notification-only** question
 below now that there's a real production deploy to gather data from,
 per that section's own note.
 
+**`flyctl` on `PATH` gotcha (2026-09-09) — separate from the `fly launch`
+gotcha above, hit when checking prod's DB weeks after the initial setup.**
+The Windows install script (`iwr https://fly.io/install.ps1 -useb | iex`)
+installs the binary to `~/.fly/bin/flyctl.exe` and adds it to the user
+`PATH` env var, but that only takes effect in shells opened *after* the
+install — a terminal (or an agent's shell) that was already open, or a
+different shell type than whichever one the installer updated, still gets
+`command not found` even though `flyctl` is genuinely installed. Fix:
+either open a brand-new terminal, or call it by full path directly
+(`"$HOME/.fly/bin/flyctl" postgres connect -a fpl-bot-buka4rill-db`).
+
+**`fly postgres connect` drops you into the `postgres` database, not the
+app's own one (2026-09-09).** Querying `proposals`/`player_snapshots`
+directly after connecting fails with `relation "..." does not exist` until
+you run `\l` to list databases and `\c fpl_bot_buka4rill` (the name `fly
+postgres attach` actually created) to switch into the right one first.
+Worth remembering any time this gets used to check real backtesting
+progress (see the step-5 data-checkpoint note above) — see README's
+"Production (Fly.io)" section for the exact commands.
+
 ## Build order (ARCHITECTURE.md §11)
 
 1. ✅ Ingestion + prediction + optimization, recommend-only
@@ -1225,6 +1251,44 @@ happening on its own, since prod runs 24/7 on Fly against the disposable
 test account (see "Deploy" above) rather than only when a local machine
 happened to be running.
 
+**Open work tracked as GitHub issues (filed 2026-09-09)**, replacing prose
+as the source of truth for "what's next" now that the list is long enough
+to need real tracking:
+[#2](https://github.com/buka4rill/fpl-bot/issues/2) Wildcard/Free Hit
+verification (near-term, actionable once GW4's saved squad exists),
+[#3](https://github.com/buka4rill/fpl-bot/issues/3) backtest/recalibrate
+`HeuristicStrategy` weights (step 5 itself),
+[#4](https://github.com/buka4rill/fpl-bot/issues/4) multi-gameweek chip
+hold-value lookahead,
+[#5](https://github.com/buka4rill/fpl-bot/issues/5) `StatsProviderClient`
+(Elo/xGOT),
+[#6](https://github.com/buka4rill/fpl-bot/issues/6) `TrendsModule`
+consumption,
+[#7](https://github.com/buka4rill/fpl-bot/issues/7) revisit
+auto-execution-vs-notification-only with real prod data. #3-#6 are
+sequenced (#4/#5/#6 depend on #3 landing first) — see each issue's own
+timeline section for reasoning, not duplicated here.
+
+**Step 5's data checkpoint now has a concrete calendar projection, not just
+"half a season" (2026-09-09).** Checked live: prod only began generating
+real automated proposals from GW4 onward (deploy day, 2026-09-08); GW4
+itself is contaminated as backtesting data (all ~10 of its `proposals` rows
+are same-day manual execution tests — real transfers/chips applied and
+reverted repeatedly against the live account, not one clean weekly
+decision), so the clean count effectively starts at GW5 (deadline
+2026-09-18). Cross-checked against the real 2026/27 fixture calendar: the
+15-19-gameweek threshold from GW5 lands on GW20-24, whose deadlines fall
+2027-01-06 to 2027-01-30 — so realistically **not before January 2027,
+more likely January-February 2027**. Verify the real count periodically
+rather than trusting this projection as it ages:
+```sql
+SELECT count(DISTINCT (season, "gameweekId")) FROM proposals WHERE "resultReportedAt" IS NOT NULL;
+```
+run via `fly postgres connect -a fpl-bot-buka4rill-db` (see README's
+"Production (Fly.io)" section for the connection gotchas — it drops you
+into the `postgres` database, not the app's `fpl_bot_buka4rill` one, and
+`flyctl` may not be on `PATH` in every shell even once installed).
+
 ## Open question: keep auto-execution, or go notification-only? (deferred, not decided)
 
 Raised 2026-09-07, right after step 3 shipped. **Decided 2026-09-08: keep
@@ -1233,6 +1297,8 @@ skipped. This isn't a final "no" to notification-only, though: the plan is
 to stress-test the FPL auth story for real once the bot runs on a cloud
 server (see the deploy TODO below — not started yet), and revisit this
 question with that real data in hand, rather than deciding on a hunch now.
+Tracked as [issue #7](https://github.com/buka4rill/fpl-bot/issues/7)
+(filed 2026-09-09) — no fixed revisit date, evidence-based.
 
 The FPL auth story (see above) has been the most fragile, highest-maintenance
 part of this whole system, and that fragility is external — nothing on our
