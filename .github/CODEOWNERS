@@ -1,0 +1,5 @@
+# Every path defaults to the repo owner — required so branch protection's
+# "require code owner reviews" on main actually restricts approval to
+# buka4rill specifically, not just "anyone with 1 approval" (a public repo
+# lets any GitHub user leave an approving review otherwise).
+* @buka4rill
