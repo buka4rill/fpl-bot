@@ -11,7 +11,7 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/src/main",
     "dev:webhook": "ts-node -r tsconfig-paths/register scripts/dev-webhook.ts",
     "auth:login": "ts-node -r tsconfig-paths/register scripts/auth-login.ts",
     "propose:captain-swap": "curl -X POST http://localhost:3000/proposal/captain-swap",
@@ -87,5 +87,11 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "unrs-resolver"
+    ]
   }
 }

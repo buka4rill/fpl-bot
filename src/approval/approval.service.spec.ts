@@ -18,7 +18,10 @@ describe('ApprovalService', () => {
     recordAppliedManually: jest.Mock;
   };
   let executionService: { apply: jest.Mock };
-  let alertService: { sendExecutionResult: jest.Mock; sendAppliedCheckIn: jest.Mock };
+  let alertService: {
+    sendExecutionResult: jest.Mock;
+    sendAppliedCheckIn: jest.Mock;
+  };
   let approvalRepository: { create: jest.Mock; save: jest.Mock };
 
   const baseProposal = (overrides: Partial<Proposal> = {}): Proposal => ({

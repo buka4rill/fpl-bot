@@ -207,9 +207,7 @@ describe('AlertService', () => {
     // Before the transfer/lineup section, not buried at the bottom —
     // regression test for the live incident where an owner approved a
     // Bench Boost proposal without the message ever mentioning it.
-    expect(text.indexOf('🃏 Chip:')).toBeLessThan(
-      text.indexOf('No transfers'),
-    );
+    expect(text.indexOf('🃏 Chip:')).toBeLessThan(text.indexOf('No transfers'));
   });
 
   it('says nothing about a chip when none is being played', async () => {
@@ -241,8 +239,10 @@ describe('AlertService', () => {
     it('summarizes a no-op proposal', async () => {
       await service.sendAppliedCheckIn(proposal);
 
-      const [text, proposalId] = telegram.sendAppliedCheckIn.mock
-        .calls[0] as [string, string];
+      const [text, proposalId] = telegram.sendAppliedCheckIn.mock.calls[0] as [
+        string,
+        string,
+      ];
       expect(proposalId).toBe('prop-1');
       expect(text).toContain('GW4');
       expect(text).toContain('The proposal was: no changes.');
@@ -336,9 +336,7 @@ describe('AlertService', () => {
       await service.sendResultReport(proposal, 52, 48);
 
       const [text] = telegram.sendMessage.mock.calls[0] as [string];
-      expect(text).toContain(
-        '📉 My suggestion would have scored 4 pts more',
-      );
+      expect(text).toContain('📉 My suggestion would have scored 4 pts more');
     });
 
     it('shows the delta when the actual score beat the suggestion', async () => {

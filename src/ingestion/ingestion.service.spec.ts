@@ -167,11 +167,15 @@ describe('IngestionService', () => {
     });
   });
 
-  it('derives season from each gameweek\'s own deadline, not the request time', async () => {
+  it("derives season from each gameweek's own deadline, not the request time", async () => {
     fplPublicClient.bootstrapStatic.mockResolvedValue({
       ...rawBootstrap,
       events: [
-        { ...rawBootstrap.events[0], id: 20, deadline_time: '2027-01-15T17:30:00Z' },
+        {
+          ...rawBootstrap.events[0],
+          id: 20,
+          deadline_time: '2027-01-15T17:30:00Z',
+        },
       ],
     });
 

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm exec tsc --noEmit -p tsconfig.json
+
+      - name: Lint
+        # Not `pnpm lint` — that script passes --fix, which would silently
+        # rewrite files and always exit 0 rather than fail CI on a real
+        # lint error.
+        run: pnpm exec eslint "{src,apps,libs,test,scripts}/**/*.ts"
+
+      - name: Unit tests
+        run: pnpm test
+        # test:e2e is intentionally not run here — it boots the full
+        # AppModule (real Postgres via TypeOrmModule) and isn't exercised
+        # anywhere else in this project; would need a Postgres service
+        # container to run in CI.

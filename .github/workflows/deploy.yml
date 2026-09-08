@@ -1,0 +1,21 @@
+name: Deploy
+
+# Manual trigger only — this bot writes to a real FPL account once a
+# proposal is approved, so a deploy going live is a deliberate action, not
+# a side effect of merging. Run this from the Actions tab after CI is green
+# on the commit you want live.
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

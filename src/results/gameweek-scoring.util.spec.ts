@@ -1,5 +1,9 @@
 import { computeProposalActualScore } from './gameweek-scoring.util';
-import { Player, PlayerGameweekStats, SquadRules } from '../common/types/domain.types';
+import {
+  Player,
+  PlayerGameweekStats,
+  SquadRules,
+} from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
 import { FplChip } from '../common/enums/chip.enum';
 

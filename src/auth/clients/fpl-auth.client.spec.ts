@@ -150,4 +150,85 @@ describe('FplAuthClient', () => {
       await expect(client.isAuthenticated()).resolves.toBe(true);
     });
   });
+
+  describe('TOKEN_STORE_PATH (persistent-volume mode, e.g. Fly.io)', () => {
+    const STORE_PATH = '/data/fpl-refresh-token.txt';
+
+    const buildClientWithStorePath = async (): Promise<FplAuthClient> => {
+      http = { post: jest.fn(), get: jest.fn() };
+      const config = {
+        get: jest.fn((key: string) => {
+          if (key === 'fpl.refreshToken') return REFRESH_TOKEN;
+          if (key === 'auth.tokenStorePath') return STORE_PATH;
+          return undefined;
+        }),
+      };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          FplAuthClient,
+          { provide: HttpService, useValue: http },
+          { provide: ConfigService, useValue: config },
+        ],
+      }).compile();
+      return module.get<FplAuthClient>(FplAuthClient);
+    };
+
+    it('prefers a token already on the store over the config-sourced one', async () => {
+      (fs.readFileSync as jest.Mock).mockReturnValue('stored-token\n');
+      const storeClient = await buildClientWithStorePath();
+      http.post.mockReturnValue(of(tokenResponse()));
+
+      await storeClient.isAuthenticated();
+
+      const [, body] = http.post.mock.calls[0] as [string, URLSearchParams];
+      expect(body.get('refresh_token')).toBe('stored-token');
+    });
+
+    it('falls back to the config-sourced token when nothing is on the store yet', async () => {
+      (fs.readFileSync as jest.Mock).mockImplementation(() => {
+        throw new Error('ENOENT: no such file');
+      });
+      const storeClient = await buildClientWithStorePath();
+      http.post.mockReturnValue(of(tokenResponse()));
+
+      await storeClient.isAuthenticated();
+
+      const [, body] = http.post.mock.calls[0] as [string, URLSearchParams];
+      expect(body.get('refresh_token')).toBe(REFRESH_TOKEN);
+    });
+
+    it('writes a rotated token to the store path, not .env', async () => {
+      (fs.readFileSync as jest.Mock).mockReturnValue('stored-token\n');
+      const storeClient = await buildClientWithStorePath();
+      http.post.mockReturnValue(
+        of(tokenResponse({ refresh_token: 'rotated-token' })),
+      );
+
+      await storeClient.isAuthenticated();
+
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        STORE_PATH,
+        'rotated-token',
+        'utf8',
+      );
+      expect(fs.writeFileSync).not.toHaveBeenCalledWith(
+        expect.stringContaining('.env'),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('does not fail the caller when writing to the store path throws', async () => {
+      (fs.readFileSync as jest.Mock).mockReturnValue('stored-token\n');
+      const storeClient = await buildClientWithStorePath();
+      (fs.writeFileSync as jest.Mock).mockImplementation(() => {
+        throw new Error('EROFS: read-only file system');
+      });
+      http.post.mockReturnValue(
+        of(tokenResponse({ refresh_token: 'rotated-token' })),
+      );
+
+      await expect(storeClient.isAuthenticated()).resolves.toBe(true);
+    });
+  });
 });

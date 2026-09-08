@@ -232,7 +232,7 @@ deciding one, so it bypasses the approval state machine entirely.
 | DB | **Decided: Postgres + TypeORM**, explicit migrations, run locally via Docker — see `CLAUDE.md`'s "Persistence" section. |
 | Optimization | `javascript-lp-solver` (pure TS, fine for squad-sized ILP) — or, if the model outgrows it, a small internal Python microservice (PuLP/OR-Tools) called over HTTP, keeping NestJS as the orchestrator |
 | HTTP client for FPL | `axios`/`undici` with a dedicated cookie-jar-aware client for the authenticated session, isolated in `ExecutionModule` only |
-| Secrets | **As built: a gitignored `.env`**, not a secrets manager as suggested here — reasonable for a single-user local setup; worth revisiting alongside the not-yet-started move off the local machine (`CLAUDE.md`'s deploy TODO). |
+| Secrets | **As built: a gitignored `.env`** locally, `fly secrets set` in production — not a dedicated secrets manager as suggested here, reasonable for a single-user setup. See `CLAUDE.md`'s deploy section. |
 | Notifications | Telegram Bot API (see §7) — decided, implemented |
 
 ---

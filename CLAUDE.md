@@ -516,51 +516,133 @@ the model, not a "what if"), otherwise noting REJECTED or, for EXPIRED,
 echoing back whatever the check-in's `appliedManually` answer was (or that
 none came in).
 
-## TODO: deploy off the local machine + quick tunnel (not started)
+## Deploy (Fly.io) + CI/CD (2026-09-08 — config built, first real deploy not yet run)
 
 Raised 2026-09-07: `dev:webhook`'s Cloudflare *quick* tunnel
-(`trycloudflare.com`) failed 8/8 fresh attempts in one session — Telegram
-couldn't resolve the tunnel hostname each time, even though cloudflared
-registered the tunnel successfully every time locally. Quick tunnels are
-explicitly disclaimed by Cloudflare as "no uptime guarantee, experiment
-only," so this isn't shocking, but it's also a symptom of a deeper gap:
-the bot's actual job (hourly deadline polling, an always-reachable Telegram
-webhook) needs a host that's on 24/7 with a stable public endpoint —
-something a personal machine + ephemeral tunnel was never going to provide
-long-term. `dev:webhook` should stay exactly what it is (a *local dev*
-convenience for testing the webhook-receiving side), not the deployment
-story.
+(`trycloudflare.com`) failed 8/8 fresh attempts in one session (and failed
+again, twice, on 2026-09-08 while testing chips) — Telegram couldn't
+resolve the tunnel hostname each time, even though cloudflared registered
+the tunnel successfully every time locally. Quick tunnels are explicitly
+disclaimed by Cloudflare as "no uptime guarantee, experiment only," so
+this isn't shocking, but it's also a symptom of a deeper gap: the bot's
+actual job (hourly deadline polling, an always-reachable Telegram webhook)
+needs a host that's on 24/7 with a stable public endpoint — something a
+personal machine + ephemeral tunnel was never going to provide long-term.
+`dev:webhook` stays exactly what it is (a *local dev* convenience for
+testing the webhook-receiving side), not the deployment story.
 
-**Recommendation: Fly.io** over GCP/AWS — a permanent `https://*.fly.dev`
+**Fly.io**, as recommended here previously — a permanent `https://*.fly.dev`
 domain out of the box (webhook set once, no tunnel ever again), deploys
-from a Dockerfile, and has a Postgres add-on so this session's persistence
-work carries over with little change. GCP Cloud Run and AWS (ECS/Lightsail
-+ RDS) can do this too but are built for request-driven or enterprise
-workloads — Cloud Run needs `min-instances=1` to act always-on plus a VPC
-connector for Cloud SQL, AWS needs a VPC/security-groups/task-definitions
-setup — real ops overhead for a bot serving exactly one user. Railway is a
-close second to Fly if comparing options. Not started — no Dockerfile or
-deploy config exists yet.
+from a Dockerfile, Postgres available as its own Fly app. All the config
+for this now exists (`Dockerfile`, `.dockerignore`, `fly.toml`,
+`.github/workflows/{ci,deploy}.yml`) — what's left is account-level setup
+only you can do (sign-up, `fly auth login`, first `fly launch`/secrets),
+covered in the runbook below. The Dockerfile build and a local container
+run against the real dev Postgres were both verified live 2026-09-08
+(health check returned 200, migrations ran clean) — the remaining
+unverified step is the actual `fly deploy` itself.
 
-**Also needs doing at that point, raised 2026-09-08, not started:**
-`FplAuthClient.persistRefreshTokenToEnv()` (see "Execution auth" above)
-only writes to a local `.env` file on disk — fine on a machine that runs
-continuously, but most PaaS hosts (Fly.io included) give the app an
-*ephemeral* filesystem, so that write is lost on the next restart/redeploy
-and the app would silently fall back to a stale token. `auth:login` itself
-doesn't need to change (still runs on your own machine, still pushes to
-`POST /auth/token`, just pointed at the deployed `AUTH_TARGET_URL` instead
-of `localhost:3000`) — only where the *received* token gets persisted
-server-side needs fixing. Two options discussed, neither built yet:
-1. **Mount a small persistent volume** (Fly.io supports these) and point
-   the existing file-write at a path on it instead of the ephemeral
-   container root. Same code, just a durable location — the cheaper fix,
-   and the one to reach for first.
-2. **Write through to the platform's own secrets API** (e.g. Fly's) so a
-   restart picks up the token as a real secret. More "correct" but needs
-   its own credential (a Fly API token, itself another secret to manage)
-   and real platform-specific integration code — not worth building
-   speculatively before there's an actual account/target to test against.
+**A few real bugs surfaced getting the Docker build working, all fixed
+2026-09-08:**
+- `package.json`'s `start:prod` script pointed at `node dist/main` — the
+  real build output is `dist/src/main.js` (tsconfig's rootDir spans both
+  `src/` and `scripts/`, so `nest build` preserves that prefix). This had
+  never actually been run before — would have crash-looped on the very
+  first deploy attempt. Fixed; the Dockerfile's `CMD` uses the corrected
+  path directly.
+- pnpm 10's newer default-deny policy on native `postinstall`/`install`
+  scripts (`ERR_PNPM_IGNORED_BUILDS`, flagging `@parcel/watcher` and
+  `unrs-resolver`, both transitive eslint-tooling deps) blocked a fresh
+  `pnpm install --frozen-lockfile` in Docker even after allowlisting them
+  in `pnpm-workspace.yaml`'s `onlyBuiltDependencies` — confirmed live that
+  the *exact* same config passes locally (a real TTY to fall back to) but
+  fails in a `docker build` (no TTY) unless `CI=true` is also set, which
+  tells pnpm to trust the config non-interactively. Both Dockerfile stages
+  set `ENV CI=true` before installing.
+- `TypeOrmModule.forRootAsync` (`app.module.ts`) and the standalone CLI
+  datasource (`data-source.ts`) only supported discrete
+  `DATABASE_HOST`/`PORT`/`NAME`/`USER`/`PASSWORD` fields — Fly's Postgres
+  (`fly postgres attach`) instead injects one `DATABASE_URL` connection
+  string. Both now accept `DATABASE_URL` when set, taking priority over
+  the discrete fields, which local dev's docker-compose Postgres still
+  uses unchanged.
+
+**`FplAuthClient`'s refresh-token persistence (raised 2026-09-08, also
+fixed same day):** it used to only write to a local `.env` file — fine on
+a machine that runs continuously, but Fly's filesystem is ephemeral, so
+that write would've been lost on every restart/redeploy and the app would
+silently fall back to a stale token. Fixed with `TOKEN_STORE_PATH` (see
+`FplAuthClient.readStoredRefreshToken`/`persistRefreshToken`): when set, a
+previously-rotated token is read from/written to a file at that path
+instead of `.env`, and `fly.toml` points it at `/data/fpl-refresh-token.txt`
+on a mounted persistent volume. Local dev leaves `TOKEN_STORE_PATH` unset
+and keeps rewriting `.env` exactly as before — no behavior change there.
+`auth:login` itself doesn't need to change either way (still runs on your
+own machine, still pushes to `POST /auth/token`, just pointed at the
+deployed `AUTH_TARGET_URL` instead of `localhost:3000`).
+
+**CI** (`.github/workflows/ci.yml`): type-check + lint + unit tests on
+every push to `main` and every PR. No Postgres service container — the
+unit suite is fully mocked-repository-based, no live DB needed. `test:e2e`
+(`test/app.e2e-spec.ts`) is deliberately *not* run here: it boots the
+full `AppModule` including real `TypeOrmModule`, needs a live Postgres,
+and is unmodified `@nestjs/cli` boilerplate not exercised anywhere else in
+this project — revisit if it's ever actually used for something specific.
+
+**CD** (`.github/workflows/deploy.yml`): `workflow_dispatch` only, not
+automatic on merge — a deliberate choice, since a bad deploy here means an
+autonomous bot pushing bad changes to a real FPL account, not just a
+broken staging site. Run it from the Actions tab once CI is green on the
+commit you want live; needs a `FLY_API_TOKEN` repo secret (see runbook).
+
+### Runbook — what's left to actually go live
+
+Everything below is either an account-level action only you can take, or
+a one-time provisioning step best done deliberately rather than silently
+by an agent (creating billed cloud resources). Fly CLI commands are
+copy-pasteable once you're logged in.
+
+1. **Sign up at https://fly.io** and install `flyctl`
+   (`iwr https://fly.io/install.ps1 -useb | iex` on Windows, or see
+   Fly's own install docs for your platform).
+2. **`fly auth login`** — opens a browser, one-time.
+3. **Pick a unique app name** and update it in `fly.toml`'s `app =` line
+   (Fly app names are globally unique — `fpl-bot` is very likely taken).
+4. **`fly launch --no-deploy`** from the repo root — detects the existing
+   `fly.toml`/`Dockerfile`, creates the app on Fly without deploying yet.
+5. **Create the Postgres app and attach it**: `fly postgres create`, then
+   `fly postgres attach <postgres-app-name>` (run from the repo root, or
+   pass `--app <your-app-name>`) — this automatically sets `DATABASE_URL`
+   as a secret on the main app.
+6. **Create the volume** `fly.toml` already references:
+   `fly volumes create fpl_bot_data --size 1` (1GB is overkill for a
+   handful of bytes, but it's Fly's minimum).
+7. **Set the remaining secrets** (never commit these):
+   ```
+   fly secrets set FPL_TEAM_ID=... FPL_REFRESH_TOKEN=... AUTH_PUSH_SECRET=... TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
+   ```
+8. **`fly deploy`** — first real deploy. Watch `fly logs` for the same
+   clean boot sequence verified locally (all modules initialized, routes
+   mapped, no errors).
+9. **Point `auth:login` at the deployed instance**: set
+   `AUTH_TARGET_URL=https://<your-app-name>.fly.dev` in your local `.env`,
+   then run `pnpm run auth:login` once from your own terminal to push a
+   fresh token to the now-live instance (same script, same flow as local —
+   only the target URL changes).
+10. **Re-register the Telegram webhook** at the permanent Fly URL instead
+    of a tunnel — either adapt `scripts/dev-webhook.ts`'s `setWebhook` call
+    for a one-off manual run, or call Telegram's `setWebhook` API directly:
+    `https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-app-name>.fly.dev/approval/telegram-callback`.
+    This is the step that actually ends the tunnel saga — once done, a
+    real Approve/Reject tap should reach the app with no manual replay
+    needed, for the first time all session.
+11. **For CI's deploy workflow**: add a `FLY_API_TOKEN` repo secret
+    (Settings → Secrets and variables → Actions) — generate one with
+    `fly tokens create deploy`.
+
+Once through this once, revisit the deferred **auto-execution vs.
+notification-only** question below with real production data in hand,
+per that section's own note.
 
 ## Build order (ARCHITECTURE.md §11)
 

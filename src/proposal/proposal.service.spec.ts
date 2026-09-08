@@ -137,10 +137,12 @@ describe('ProposalService', () => {
     expect(await service.findBySeasonAndGameweekId('26_27', 4)).toEqual(
       proposal,
     );
-    expect(await service.findBySeasonAndGameweekId('26_27', 999)).toBeUndefined();
+    expect(
+      await service.findBySeasonAndGameweekId('26_27', 999),
+    ).toBeUndefined();
   });
 
-  it('does not match a prior season\'s proposal for the same gameweek id', async () => {
+  it("does not match a prior season's proposal for the same gameweek id", async () => {
     // Regression test: FPL resets gameweek ids to 1 each season, so a plain
     // gameweekId lookup would find last season's GW4 row and wrongly report
     // "already proposed" for the new season's GW4.

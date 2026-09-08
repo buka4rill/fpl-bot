@@ -22,18 +22,29 @@ import { ResultsModule } from './results/results.module';
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres' as const,
-        host: config.get<string>('database.host'),
-        port: config.get<number>('database.port'),
-        database: config.get<string>('database.name'),
-        username: config.get<string>('database.user'),
-        password: config.get<string>('database.password'),
-        entities: [__dirname + '/persistence/entities/*.entity.{ts,js}'],
-        migrations: [__dirname + '/persistence/migrations/*.{ts,js}'],
-        synchronize: false,
-        migrationsRun: true,
-      }),
+      useFactory: (config: ConfigService) => {
+        // DATABASE_URL (set in production — e.g. `fly postgres attach`
+        // injects this) takes priority over the discrete fields, which
+        // local dev's docker-compose Postgres still uses.
+        const url = config.get<string>('database.url');
+        const connection = url
+          ? { url }
+          : {
+              host: config.get<string>('database.host'),
+              port: config.get<number>('database.port'),
+              database: config.get<string>('database.name'),
+              username: config.get<string>('database.user'),
+              password: config.get<string>('database.password'),
+            };
+        return {
+          type: 'postgres' as const,
+          ...connection,
+          entities: [__dirname + '/persistence/entities/*.entity.{ts,js}'],
+          migrations: [__dirname + '/persistence/migrations/*.{ts,js}'],
+          synchronize: false,
+          migrationsRun: true,
+        };
+      },
     }),
     IngestionModule,
     TrendsModule,

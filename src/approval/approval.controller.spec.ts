@@ -199,9 +199,7 @@ describe('ApprovalController', () => {
   });
 
   it('ignores an applied-manually reply from an unrecognized chat', async () => {
-    await controller.handleTelegramCallback(
-      update('appliedyes:prop-1', 99999),
-    );
+    await controller.handleTelegramCallback(update('appliedyes:prop-1', 99999));
 
     expect(approvalService.recordAppliedManually).not.toHaveBeenCalled();
   });

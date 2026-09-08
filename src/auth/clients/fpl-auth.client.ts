@@ -64,7 +64,15 @@ export class FplAuthClient {
     private readonly http: HttpService,
     private readonly config: ConfigService,
   ) {
-    this.refreshToken = this.config.get<string>('fpl.refreshToken') ?? '';
+    // A previously-rotated token on the persistent store (see
+    // persistRefreshToken below) takes priority over the config-sourced
+    // one — it reflects the latest rotation, while fpl.refreshToken is
+    // whatever was true at last deploy/secret-set time. Empty on first
+    // boot (nothing stored yet), where the config value is the only source.
+    this.refreshToken =
+      this.readStoredRefreshToken() ??
+      this.config.get<string>('fpl.refreshToken') ??
+      '';
   }
 
   async getMyTeam(teamId: number): Promise<FplMyTeam> {
@@ -184,7 +192,7 @@ export class FplAuthClient {
     this.refreshToken = refreshToken;
     this.accessToken = undefined;
     this.accessTokenExpiresAt = 0;
-    this.persistRefreshTokenToEnv(refreshToken);
+    this.persistRefreshToken(refreshToken);
     this.logger.log('FPL refresh token updated.');
   }
 
@@ -241,21 +249,49 @@ export class FplAuthClient {
     // fpl-test-account-for-execution-testing).
     if (data.refresh_token && data.refresh_token !== this.refreshToken) {
       this.refreshToken = data.refresh_token;
-      this.persistRefreshTokenToEnv(this.refreshToken);
+      this.persistRefreshToken(this.refreshToken);
     }
     // Small safety margin before the token's real expiry.
     this.accessTokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
     return this.accessToken;
   }
 
-  // Local-filesystem-only durability: fine for this app's current single-
-  // machine deployment, but a checked-out `.env` won't survive a redeploy
-  // on typical ephemeral-filesystem PaaS hosting (Fly.io, Railway, etc.) —
-  // needs revisiting alongside CLAUDE.md's not-yet-started deploy TODO
-  // (e.g. writing through to the platform's own secrets API instead).
-  // Best-effort: a failure here must never block the access token this
-  // call already successfully obtained.
-  private persistRefreshTokenToEnv(refreshToken: string): void {
+  // Reads a previously-rotated token from TOKEN_STORE_PATH (see below) —
+  // undefined if unconfigured (local dev) or nothing's been written there
+  // yet (first boot on a fresh volume), in which case the constructor
+  // falls back to the config-sourced token.
+  private readStoredRefreshToken(): string | undefined {
+    const storePath = this.config.get<string>('auth.tokenStorePath');
+    if (!storePath) return undefined;
+    try {
+      const token = fs.readFileSync(storePath, 'utf8').trim();
+      return token || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // TOKEN_STORE_PATH (set in production to a path on a mounted persistent
+  // volume, e.g. Fly.io) takes priority when configured; local dev falls
+  // back to rewriting .env, as before. Either way this is best-effort — a
+  // failure here must never block the access token this call already
+  // successfully obtained, just cost a fresh manual capture on the next
+  // restart before the following rotation.
+  private persistRefreshToken(refreshToken: string): void {
+    const storePath = this.config.get<string>('auth.tokenStorePath');
+    if (storePath) {
+      try {
+        fs.mkdirSync(path.dirname(storePath), { recursive: true });
+        fs.writeFileSync(storePath, refreshToken, 'utf8');
+      } catch (error) {
+        this.logger.warn(
+          `Failed to persist refresh token to ${storePath} — a restart ` +
+            `before the next rotation will need a fresh capture: ${String(error)}`,
+        );
+      }
+      return;
+    }
+
     try {
       const envPath = path.resolve(process.cwd(), '.env');
       const content = fs.readFileSync(envPath, 'utf8');
