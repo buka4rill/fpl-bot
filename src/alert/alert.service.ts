@@ -87,9 +87,11 @@ export class AlertService {
           `🔄 Selling ${priced(transfer.playerOutId)} ➔ Buying ${priced(transfer.playerInId)}`,
         );
       }
-      if (proposal.hitCost > 0) {
-        lines.push(`💸 Hit: -${proposal.hitCost} pts`);
-      }
+      lines.push(
+        proposal.hitCost > 0
+          ? `💸 Hit: -${proposal.hitCost} pts`
+          : '✅ Hit: 0 pts (within free transfers)',
+      );
     }
 
     const bench = [proposal.benchGoalkeeperId, ...proposal.benchOutfieldIds]

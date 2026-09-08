@@ -148,6 +148,21 @@ describe('AlertService', () => {
     expect(text).toContain('💸 Hit: -4 pts');
   });
 
+  it('shows a zero-hit line for transfers made within the free allowance', async () => {
+    await service.sendProposal(
+      {
+        ...proposal,
+        transfers: [{ playerOutId: 3, playerInId: 4 }],
+        hitCost: 0,
+      },
+      players,
+      snapshots,
+    );
+
+    const [text] = telegram.sendProposalAlert.mock.calls[0] as [string];
+    expect(text).toContain('✅ Hit: 0 pts (within free transfers)');
+  });
+
   it('lists multiple bench players comma-separated', async () => {
     await service.sendProposal(
       { ...proposal, benchOutfieldIds: [3, 4] },
