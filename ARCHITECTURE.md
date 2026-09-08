@@ -234,6 +234,7 @@ deciding one, so it bypasses the approval state machine entirely.
 | HTTP client for FPL | `axios`/`undici` with a dedicated cookie-jar-aware client for the authenticated session, isolated in `ExecutionModule` only |
 | Secrets | **As built: a gitignored `.env`** locally, `fly secrets set` in production — not a dedicated secrets manager as suggested here, reasonable for a single-user setup. See `CLAUDE.md`'s deploy section. |
 | Notifications | Telegram Bot API (see §7) — decided, implemented |
+| CI/CD | **Decided: GitHub Actions + Fly.io**, not a heavier CI/CD platform — reasonable for a single-user setup. CI (lint/type-check/test) runs on every push and PR; Deploy is gated on CI's own completion (`workflow_run`, not a parallel `push` trigger — the two ran in parallel with no ordering guarantee in an earlier version, letting Deploy finish before Test even completed) and only fires `if: conclusion == 'success'`. `main` is branch-protected (PR + 1 approval required, repo admin exempt) so the repo being public never lets an unreviewed push reach the deploy pipeline. See `CLAUDE.md`'s "Deploy (Fly.io) + CI/CD" section. |
 
 ---
 
@@ -298,6 +299,7 @@ this sketch.
 | Credential compromise | Isolate credentials to the execution module only; encrypt at rest; rotate session rather than storing raw password where possible |
 | Model overconfidence | Log every proposal's predicted vs. actual points; treat prediction as a decision-support signal, not a guarantee — realistically, beating informed human consensus by a wide margin is hard. **Implemented 2026-09-08** as `ResultsModule`'s post-gameweek report (§3) — a real per-proposal predicted-vs-actual comparison, not just a plan. |
 | Scraping social/trend sources breaks or gets blocked | Use a small explicit source whitelist you control, not open-ended scraping; degrade gracefully (proceed on model + fixtures alone) if a source is unavailable |
+| Public repo + auto-deploy lets an unreviewed change reach production | `main` branch-protected — anyone but the repo admin needs an approved PR to merge (admin can still push directly); CI triggers on plain `pull_request` (not `pull_request_target`), so a fork's PR never gets repo secrets; Deploy only runs after CI itself succeeds (see §8's CI/CD row) |
 
 ---
 

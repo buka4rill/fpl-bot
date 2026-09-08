@@ -150,6 +150,20 @@ pnpm test:watch
 pnpm test:cov
 ```
 
+## Pre-commit hooks
+
+`pnpm install` wires up a Husky `pre-commit` hook (via the `prepare`
+script) that runs [lint-staged](https://github.com/okonet/lint-staged)
+automatically on every `git commit`:
+
+- staged `src/**/*.ts` files get `eslint --fix`, then `jest --bail
+  --findRelatedTests` — only the tests related to what actually changed,
+  not the full suite
+- staged `scripts/**/*.ts` / `test/**/*.ts` files get `eslint --fix` only
+
+A lint error that can't be auto-fixed, or a failing related test, blocks
+the commit.
+
 ## Exercising the app locally
 
 Manual trigger endpoints — all `POST`, all needing `FPL_TEAM_ID`/
@@ -219,6 +233,20 @@ If the refresh token goes stale while the app is running unattended (no
 one at a terminal to run the above), it'll tell you: `DeadlineWatcherService`
 checks login state before generating a proposal and sends a Telegram
 message asking you to run `auth:login` rather than failing silently.
+
+## CI / CD
+
+- **CI** (`.github/workflows/ci.yml`) runs type-check, lint, and unit
+  tests on every push to `main` and every pull request.
+- **Deploy** (`.github/workflows/deploy.yml`) ships to Fly.io
+  (`fpl-bot-buka4rill.fly.dev`) automatically after CI passes — it's
+  triggered by CI's own completion (`workflow_run`), not a parallel push,
+  so a commit that fails CI never races its way into production. A manual
+  redeploy is still available from the Actions tab
+  (`workflow_dispatch`).
+- `main` is branch-protected: merging requires an approved pull request,
+  but the repo admin can still push directly. See `CLAUDE.md`'s "Deploy
+  (Fly.io) + CI/CD" section for the full history and reasoning.
 
 ## Notes
 
