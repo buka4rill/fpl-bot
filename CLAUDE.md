@@ -39,10 +39,10 @@ file is the short version for whichever session picks this repo up next.
 | `trends` | scaffolded — curated source whitelist, not consumed yet |
 | `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder |
 | `optimization` | implemented — squad optimizer (ILP) + chip evaluator |
-| `proposal` | implemented — optimizer-driven, plus a manual captain-swap override (`POST /proposal/captain-swap`) for low-risk execution testing |
+| `proposal` | implemented — optimizer-driven, plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing) and `POST /proposal/chip` (declare a chip for this week's proposal — see "Execution auth" below) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
 | `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller; triggers execution on `APPROVED` |
-| `execution` | implemented for **lineup/captain only** — `FplAuthClient` (OAuth refresh-token flow, see below) + `ExecutionService`; transfers/chips not built |
+| `execution` | implemented for **lineup/captain/transfers/chips** — `FplAuthClient` (OAuth refresh-token flow, see below) + `ExecutionService`. Transfers/chip contract is unverified against the live API — see below |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday) |
 | persistence | implemented — Postgres + TypeORM, see "Persistence" below |
 
@@ -99,6 +99,28 @@ silently) — the fix is repeating the manual browser capture, not automated
 re-login. Full capture steps and the underlying HTTP contracts are in
 Claude's persistent memory (`fpl-write-api-contract`), not duplicated here.
 
+**Transfers/chips (step 4, 2026-09-08) — contract is unverified, unlike
+lineup/captain.** `/api/my-team/` was captured live before it was built;
+`/api/transfers/` never was — `FplAuthClient.submitTransfers` and the
+`chip` field on `setLineup` are built against a well-established community
+library (`amosbastian/fpl`'s `fpl/models/user.py`, already in
+ARCHITECTURE.md's Sources), not a live capture. Specifics carried over
+unverified: the exact `/api/transfers/` payload shape (dry-run
+`confirmed: false` → commit `confirmed: true`), and that Triple Captain's
+tripling is signalled purely by the `chip` field server-side (picks stay
+at `multiplier: 2`, not `3`). Needs live confirmation the first time a
+transfer or chip actually gets played for real — watch the
+`execution_logs` row and confirm against the FPL app afterward, same as
+lineup/captain was verified. A wrong shape should fail as a clean 400
+before anything applies.
+
+`ChipEvaluatorService` remains a deliberate stub — nothing decides *when*
+a chip is automatically worth playing (a prediction/strategy problem, not
+execution). `POST /proposal/chip` is the manual substitute: "I've decided
+to play chip X this week," runs the full optimizer with that chip factored
+in (Wildcard/Free Hit zero out hit cost, including in the ILP itself, not
+just the reported number — see `SquadOptimizerService.optimizeSquad`).
+
 For local webhook testing (tapping Approve/Reject against a real Telegram
 callback), `pnpm run dev:webhook` automates the tunnel + webhook wiring —
 see `scripts/dev-webhook.ts`.
@@ -134,24 +156,32 @@ deploy config exists yet.
 1. ✅ Ingestion + prediction + optimization, recommend-only
 2. ✅ Approval state machine + alert loop
 3. ✅ Execution for lineup/captain only — verified live end-to-end
-4. ⬜ Extend execution to transfers + chips
+4. ✅ Extend execution to transfers + chips — built 2026-09-08, contract
+   unverified against the live API (see "Execution auth" above); needs a
+   real live test the next time a transfer/chip is actually played
 5. ⬜ Iterate the prediction model once there's backtestable history
 
-Currently at: **step 3 done**, verified against a real FPL account and a
-real Telegram bot — not just unit tests. Persistence (below) is also done
-now. Next: revisit the open question below before starting step 4.
+Currently at: **step 4 done** (pending its own live verification), on top
+of persistence. Next: step 5 needs a few gameweeks of `PlayerSnapshot`
+history to accumulate first; the weekly chip/transfer prompt and
+post-deadline check-in (below) are both unblocked and ready to pick up
+whenever.
 
-## Open question: keep auto-execution, or go notification-only? (not decided)
+## Open question: keep auto-execution, or go notification-only? (deferred, not decided)
 
-Raised 2026-09-07, right after step 3 shipped — deliberately deferred,
-**revisit once other features are done**, don't start on it speculatively.
+Raised 2026-09-07, right after step 3 shipped. **Decided 2026-09-08: keep
+auto-execution for now** — step 4 (transfers + chips) was built rather than
+skipped. This isn't a final "no" to notification-only, though: the plan is
+to stress-test the FPL auth story for real once the bot runs on a cloud
+server (see the deploy TODO below — not started yet), and revisit this
+question with that real data in hand, rather than deciding on a hunch now.
 
 The FPL auth story (see above) has been the most fragile, highest-maintenance
 part of this whole system, and that fragility is external — nothing on our
-side fixes FPL's session model. Under consideration: drop auto-execution
-entirely. Keep `ExecutionModule`'s code as-is but never call it; run purely
-as a notification bot — propose, alert, and the user applies changes
-manually in the FPL app.
+side fixes FPL's session model. Still under consideration for later: drop
+auto-execution entirely. Keep `ExecutionModule`'s code as-is but never call
+it; run purely as a notification bot — propose, alert, and the user applies
+changes manually in the FPL app.
 
 **Correction 2026-09-07**: extending execution to transfers/chips (step 4)
 is *not* automatically moot under notification-only — that was conflating
