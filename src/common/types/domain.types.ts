@@ -113,6 +113,12 @@ export interface Proposal {
   hitCost: number;
   status: ProposalStatus;
   createdAt: string;
+  // Only meaningful once status is EXPIRED — null/undefined otherwise (never
+  // asked). Answered via a post-deadline Telegram Yes/No check-in purely to
+  // label the outcome for future backtesting (step 5); it never gates or
+  // re-triggers execution, and a REJECTED/APPROVED proposal's outcome is
+  // already known without asking.
+  appliedManually?: boolean | null;
 }
 
 export interface Approval {

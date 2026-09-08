@@ -9,14 +9,14 @@ import { ProposalStatus } from '../common/enums/proposal-status.enum';
 
 describe('ApprovalController', () => {
   let controller: ApprovalController;
-  let approvalService: { decide: jest.Mock };
+  let approvalService: { decide: jest.Mock; recordAppliedManually: jest.Mock };
   let httpService: { post: jest.Mock };
 
   const CONFIGURED_CHAT_ID = '12345';
   const BOT_TOKEN = 'test-bot-token';
 
   beforeEach(async () => {
-    approvalService = { decide: jest.fn() };
+    approvalService = { decide: jest.fn(), recordAppliedManually: jest.fn() };
     httpService = {
       post: jest.fn().mockReturnValue(of({ data: {} } as AxiosResponse)),
     };
@@ -163,5 +163,46 @@ describe('ApprovalController', () => {
 
     expect(approvalService.decide).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: true });
+  });
+
+  it('records a "yes" applied-manually reply via the appliedyes:<id> callback', async () => {
+    const result = await controller.handleTelegramCallback(
+      update('appliedyes:prop-1'),
+    );
+
+    expect(approvalService.recordAppliedManually).toHaveBeenCalledWith(
+      'prop-1',
+      true,
+    );
+    expect(approvalService.decide).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('records a "no" applied-manually reply via the appliedno:<id> callback', async () => {
+    await controller.handleTelegramCallback(update('appliedno:prop-1'));
+
+    expect(approvalService.recordAppliedManually).toHaveBeenCalledWith(
+      'prop-1',
+      false,
+    );
+  });
+
+  it('answers the callback query with a fixed toast for an applied-manually reply', async () => {
+    await controller.handleTelegramCallback(
+      update('appliedyes:prop-1', 12345, 'cbq-applied'),
+    );
+
+    expect(httpService.post).toHaveBeenCalledWith(
+      `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,
+      { callback_query_id: 'cbq-applied', text: 'Thanks — noted.' },
+    );
+  });
+
+  it('ignores an applied-manually reply from an unrecognized chat', async () => {
+    await controller.handleTelegramCallback(
+      update('appliedyes:prop-1', 99999),
+    );
+
+    expect(approvalService.recordAppliedManually).not.toHaveBeenCalled();
   });
 });

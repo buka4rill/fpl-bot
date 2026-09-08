@@ -46,7 +46,7 @@ file is the short version for whichever session picks this repo up next.
 | `team-state` | implemented (2026-09-08, rebuilt same day) — reads free transfers + chip availability live from FPL's authenticated my-team endpoint (via `ExecutionService`) and sends it as an informational Telegram report before each week's proposal; no persistence, never blocks; `POST /team-state/report` manually re-triggers it for testing — see "Weekly team-status report" below |
 | `proposal` | implemented — optimizer-driven (`POST /proposal/generate` manually triggers it now, live team state), plus manual overrides: `POST /proposal/captain-swap` (low-risk execution testing), `POST /proposal/manual-transfer` (propose exactly one transfer, built from live my-team data — used to verify `/api/transfers/`, see "Execution auth" below), and `POST /proposal/chip` (declare a chip for this week's proposal) |
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
-| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:` callbacks only); triggers execution on `APPROVED` |
+| `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:`, plus `appliedyes:`/`appliedno:` — see "Post-deadline applied-manually check-in" below); triggers execution on `APPROVED` |
 | `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers verified live 2026-09-08; chips still unverified — see below |
 | `auth` | implemented (2026-09-08) — holds `FplAuthClient`/the authenticated session (moved out of `ExecutionModule`, see "Execution auth" below); `AuthService.isAuthenticated()`/`assertAuthenticated()` let other modules check/gate on login state; `POST /auth/token` (shared-secret guarded) applies a freshly-captured refresh token to the running instance — the landing spot for `pnpm run auth:login`'s Playwright-assisted capture (`scripts/auth-login.ts`) |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday); also gates on `AuthService.isAuthenticated()` before generating a proposal — see "Execution auth" below |
@@ -167,6 +167,21 @@ unconfirmed: that Triple Captain's tripling is signalled purely by the
 live confirmation the first time a chip actually gets played for real —
 same watch-the-execution-log approach as the transfer verification above.
 
+**Correction 2026-09-08 — not blocked on "preseason" the way it looked.**
+A live `POST /team-state/report` against the disposable test account
+(currently `gameweekId: 4`) came back with `bboost`/`3xc` both already
+`status_for_entry: 'available'` (`start_event: 1`) — only `wildcard`/
+`freehit` are `unavailable` (`start_event: 2`). Combined with
+`transfers.status` still reporting `'unlimited'` at gameweek 4 (expected
+only preseason, see "Weekly team-status report" below), this looks less
+like "the account is in preseason" and more like "this account's team has
+no saved picks/gameweek history yet" — FPL evidently gates transfer-type
+chips behind that, independent of the live gameweek clock. Practical
+upshot: **Bench Boost/Triple Captain look testable against this account
+right now**; Wildcard/Free Hit likely need the account to get through a
+real deadline with a saved squad first. Re-check via `/team-state/report`
+before assuming either way — this has only been observed once.
+
 `ChipEvaluatorService` remains a deliberate stub — nothing decides *when*
 a chip is automatically worth playing (a prediction/strategy problem, not
 execution). `POST /proposal/chip` is the manual substitute: "I've decided
@@ -280,6 +295,39 @@ upcoming gameweek on demand — same idea as `POST /proposal/captain-swap`.
 If that week's prompt was already fully answered, it deliberately restarts
 the sequence rather than no-op'ing, so you can re-confirm on demand.
 
+## Post-deadline applied-manually check-in (2026-09-08, implemented)
+
+Scoped narrower than the original "ask after every deadline" idea (see the
+open question below) once it was clear the state machine already answers
+most of the question: `APPROVED` means the bot itself applied it
+(`ExecutionLogEntity` has success/failure); `REJECTED` means the owner
+explicitly declined, intent already known. The only genuinely unknown case
+is **`EXPIRED`** — silence (or a too-late reply) before the deadline, where
+the hard "silence means do nothing" constraint means the bot never touched
+FPL, but the owner might still have made the change by hand in the app.
+Without knowing which, a bad outcome next gameweek can't be told apart from
+"model was wrong" vs. "advice wasn't followed" — which is exactly what step
+5's backtesting needs to distinguish.
+
+`ApprovalService.expire()` (called from both `expireOverdue()`'s sweep and
+a too-late `decide()`) now sends a Telegram Yes/No check-in
+(`AlertService.sendAppliedCheckIn` → `TelegramAdapter.sendAppliedCheckIn`)
+right after transitioning a proposal to `EXPIRED`, summarizing what the
+plan was (transfer count + chip, if any). Best-effort and wrapped in its
+own try/catch inside `expire()` — a Telegram hiccup here must never break
+`DeadlineWatcherService.checkDeadline()`, which calls `expireOverdue()`
+before generating the *current* gameweek's proposal on the same poll.
+
+The reply lands on a separate `appliedyes:<id>`/`appliedno:<id>` callback
+namespace (not `approve:`/`reject:` — this labels an already-terminal
+proposal, it's not a state transition) and is recorded via
+`ApprovalService.recordAppliedManually` → `ProposalService
+.recordAppliedManually`, which sets a new nullable `appliedManually:
+boolean | null` column on `ProposalEntity`/`Proposal`
+(migration `AddAppliedManuallyToProposals...`). Purely a label for future
+backtesting — never gates or re-triggers execution, and answering twice
+(a duplicate tap) just overwrites the same field rather than erroring.
+
 ## TODO: deploy off the local machine + quick tunnel (not started)
 
 Raised 2026-09-07: `dev:webhook`'s Cloudflare *quick* tunnel
@@ -338,12 +386,13 @@ server-side needs fixing. Two options discussed, neither built yet:
    the next time a chip is actually played
 5. ⬜ Iterate the prediction model once there's backtestable history
 
-Currently at: **step 4's transfer path verified**, chips still pending, plus
-the weekly team-status report and the transfer-hit policy fix (all
-2026-09-08, see above) on top of persistence. Next: step 5 needs a few
-gameweeks of `PlayerSnapshot` history to accumulate first; the
-post-deadline "did you apply it?" check-in (below) is unblocked and ready
-to pick up whenever.
+Currently at: **step 4's transfer path verified**, chips still pending (the
+test account looks like it can test Bench Boost/Triple Captain now — see
+the correction under "Execution auth" above — but Wildcard/Free Hit likely
+need it to clear a real deadline first), plus the weekly team-status
+report, the transfer-hit policy fix, and the post-deadline applied-manually
+check-in (all 2026-09-08, see above) on top of persistence. Next: step 5
+needs a few gameweeks of `PlayerSnapshot` history to accumulate.
 
 ## Open question: keep auto-execution, or go notification-only? (deferred, not decided)
 
@@ -378,13 +427,12 @@ before each week's proposal, read live from FPL rather than asked for (see
 out to be solving a problem that didn't exist). Doesn't block proposal
 generation — there was never anything to wait on once it stopped asking.
 
-Companion feature, unblocked now that persistence has landed (see below):
-
-- **After each deadline passes, ask "did you apply what was suggested?"**
-  and record the answer. In a notification-only model this is the *only*
-  way the bot ever finds out whether advice was followed — without it, a
-  bad outcome next gameweek can't be distinguished between "model was
-  wrong" and "advice wasn't followed," which breaks step 5's backtesting.
+Companion feature, unblocked now that persistence has landed — **built
+2026-09-08, scoped narrower than originally sketched here**: rather than
+asking after *every* deadline, only `EXPIRED` proposals get a post-deadline
+"did you end up applying it yourself?" check-in — `APPROVED`/`REJECTED`
+already tell the bot what happened without asking. See "Post-deadline
+applied-manually check-in" above for the full design.
 
 Full writeup: Claude's persistent memory,
 `notification-only-pivot-under-consideration`.

@@ -89,4 +89,18 @@ export class ProposalService {
     const updated: ProposalEntity = { ...proposal, status };
     return this.proposalRepository.save(updated);
   }
+
+  // Answer to the post-deadline "did you end up making the changes
+  // yourself?" check-in (ApprovalService.expire) — labels an EXPIRED
+  // proposal's real-world outcome for future backtesting. Doesn't validate
+  // status: a duplicate/late tap on the Yes/No buttons should just
+  // overwrite the same field, not throw.
+  async recordAppliedManually(id: string, applied: boolean): Promise<Proposal> {
+    const proposal = await this.proposalRepository.findOneBy({ id });
+    if (!proposal) {
+      throw new Error(`No proposal found with id ${id}.`);
+    }
+    const updated: ProposalEntity = { ...proposal, appliedManually: applied };
+    return this.proposalRepository.save(updated);
+  }
 }

@@ -33,6 +33,27 @@ export class TelegramAdapter {
     });
   }
 
+  // Post-deadline "did you apply it yourself?" check-in — a separate
+  // appliedyes:/appliedno: callback namespace from approve:/reject: since
+  // ApprovalController routes it to a different ApprovalService method
+  // (labelling an already-EXPIRED proposal, not a state transition).
+  async sendAppliedCheckIn(text: string, proposalId: string): Promise<void> {
+    if (!this.bot) {
+      this.logger.warn('TELEGRAM_BOT_TOKEN not configured — skipping send.');
+      return;
+    }
+
+    const keyboard = Markup.inlineKeyboard([
+      Markup.button.callback('Yes', `appliedyes:${proposalId}`),
+      Markup.button.callback('No', `appliedno:${proposalId}`),
+    ]);
+
+    await this.bot.telegram.sendMessage(this.chatId, text, {
+      parse_mode: 'Markdown',
+      ...keyboard,
+    });
+  }
+
   async sendMessage(text: string): Promise<void> {
     if (!this.bot) {
       this.logger.warn('TELEGRAM_BOT_TOKEN not configured — skipping send.');

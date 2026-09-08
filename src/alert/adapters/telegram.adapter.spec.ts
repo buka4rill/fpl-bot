@@ -71,4 +71,31 @@ describe('TelegramAdapter', () => {
     ).resolves.toBeUndefined();
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
+
+  it('sends a message with a yes/no inline keyboard for the applied-manually check-in', async () => {
+    const adapter = await buildAdapter('test-token');
+
+    await adapter.sendAppliedCheckIn('did you apply it?', 'prop-1');
+
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      '12345',
+      'did you apply it?',
+      expect.objectContaining({ parse_mode: 'Markdown' }),
+    );
+    const [, , extra] = sendMessageMock.mock.calls[0] as [
+      string,
+      string,
+      { reply_markup?: unknown },
+    ];
+    expect(extra.reply_markup).toBeDefined();
+  });
+
+  it('does nothing for the applied-manually check-in when no bot token is configured', async () => {
+    const adapter = await buildAdapter('');
+
+    await expect(
+      adapter.sendAppliedCheckIn('did you apply it?', 'prop-1'),
+    ).resolves.toBeUndefined();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
 });

@@ -94,7 +94,33 @@ export class ApprovalService {
     ) {
       return;
     }
-    await this.proposalService.updateStatus(proposalId, ProposalStatus.EXPIRED);
+    const updated = await this.proposalService.updateStatus(
+      proposalId,
+      ProposalStatus.EXPIRED,
+    );
+
+    // Best-effort, deliberately not awaited-and-thrown: this runs inline in
+    // DeadlineWatcherService.checkDeadline() (via expireOverdue()), and a
+    // Telegram hiccup here must never block that same poll from going on to
+    // generate the *current* gameweek's proposal.
+    try {
+      await this.alertService.sendAppliedCheckIn(updated);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to send applied-manually check-in for proposal ${proposalId}: ${String(error)}`,
+      );
+    }
+  }
+
+  // Answer to the post-deadline check-in — labels an EXPIRED proposal's
+  // real-world outcome for future backtesting only (see AlertService.
+  // sendAppliedCheckIn). Not a state transition, so it bypasses the state
+  // machine entirely.
+  async recordAppliedManually(
+    proposalId: string,
+    applied: boolean,
+  ): Promise<Proposal> {
+    return this.proposalService.recordAppliedManually(proposalId, applied);
   }
 
   // Sweeps every PENDING proposal whose deadline has passed without a reply.

@@ -38,6 +38,15 @@ const DECISION_TOAST: Record<
   [ProposalStatus.REJECTED]: 'Rejected.',
 };
 
+// Post-deadline "did you apply it yourself?" check-in — a separate action
+// namespace from approve/reject since it labels an already-EXPIRED
+// proposal's outcome rather than deciding it (see ApprovalService.
+// recordAppliedManually).
+const ACTION_TO_APPLIED: Record<string, boolean> = {
+  appliedyes: true,
+  appliedno: false,
+};
+
 @Controller('approval')
 export class ApprovalController {
   private readonly logger = new Logger(ApprovalController.name);
@@ -85,8 +94,20 @@ export class ApprovalController {
     const chatId = this.assertConfiguredChat(query.message?.chat?.id);
 
     const [action, proposalId] = query.data.split(':');
+    if (!proposalId) {
+      throw new Error(`unrecognized callback data: ${query.data}`);
+    }
+
+    if (action in ACTION_TO_APPLIED) {
+      await this.approvalService.recordAppliedManually(
+        proposalId,
+        ACTION_TO_APPLIED[action],
+      );
+      return 'Thanks — noted.';
+    }
+
     const decision = ACTION_TO_DECISION[action];
-    if (!decision || !proposalId) {
+    if (!decision) {
       throw new Error(`unrecognized callback data: ${query.data}`);
     }
 

@@ -178,4 +178,19 @@ describe('ProposalService', () => {
     );
     expect(proposal.chip).toBe(FplChip.WILDCARD);
   });
+
+  it('records the applied-manually answer and persists it', async () => {
+    const proposal = await service.generateProposal();
+
+    const updated = await service.recordAppliedManually(proposal.id, true);
+
+    expect(updated.appliedManually).toBe(true);
+    expect((await service.findById(proposal.id))?.appliedManually).toBe(true);
+  });
+
+  it('throws when recording applied-manually for an unknown proposal', async () => {
+    await expect(
+      service.recordAppliedManually('nonexistent', true),
+    ).rejects.toThrow('No proposal found');
+  });
 });

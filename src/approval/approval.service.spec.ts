@@ -15,9 +15,10 @@ describe('ApprovalService', () => {
     findById: jest.Mock;
     findAllPending: jest.Mock;
     updateStatus: jest.Mock;
+    recordAppliedManually: jest.Mock;
   };
   let executionService: { apply: jest.Mock };
-  let alertService: { sendExecutionResult: jest.Mock };
+  let alertService: { sendExecutionResult: jest.Mock; sendAppliedCheckIn: jest.Mock };
   let approvalRepository: { create: jest.Mock; save: jest.Mock };
 
   const baseProposal = (overrides: Partial<Proposal> = {}): Proposal => ({
@@ -46,12 +47,18 @@ describe('ApprovalService', () => {
         .mockImplementation((id: string, status: ProposalStatus) =>
           Promise.resolve(baseProposal({ id, status })),
         ),
+      recordAppliedManually: jest
+        .fn()
+        .mockImplementation((id: string, applied: boolean) =>
+          Promise.resolve(baseProposal({ id, appliedManually: applied })),
+        ),
     };
     executionService = {
       apply: jest.fn().mockResolvedValue({ success: true }),
     };
     alertService = {
       sendExecutionResult: jest.fn().mockResolvedValue(undefined),
+      sendAppliedCheckIn: jest.fn().mockResolvedValue(undefined),
     };
     approvalRepository = {
       create: jest.fn((approval: Approval) => approval),
@@ -218,6 +225,38 @@ describe('ApprovalService', () => {
       await service.expire('p1');
 
       expect(proposalService.updateStatus).not.toHaveBeenCalled();
+      expect(alertService.sendAppliedCheckIn).not.toHaveBeenCalled();
+    });
+
+    it('sends a post-deadline applied-manually check-in for a newly-expired proposal', async () => {
+      proposalService.findById.mockResolvedValue(baseProposal());
+
+      await service.expire('p1');
+
+      expect(alertService.sendAppliedCheckIn).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'p1', status: ProposalStatus.EXPIRED }),
+      );
+    });
+
+    it('does not throw when the applied-manually check-in fails to send', async () => {
+      proposalService.findById.mockResolvedValue(baseProposal());
+      alertService.sendAppliedCheckIn.mockRejectedValue(
+        new Error('telegram down'),
+      );
+
+      await expect(service.expire('p1')).resolves.not.toThrow();
+    });
+  });
+
+  describe('recordAppliedManually', () => {
+    it('delegates to ProposalService', async () => {
+      const approval = await service.recordAppliedManually('p1', true);
+
+      expect(proposalService.recordAppliedManually).toHaveBeenCalledWith(
+        'p1',
+        true,
+      );
+      expect(approval.appliedManually).toBe(true);
     });
   });
 

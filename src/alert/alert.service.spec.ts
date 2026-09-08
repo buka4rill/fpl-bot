@@ -4,12 +4,14 @@ import { TelegramAdapter } from './adapters/telegram.adapter';
 import { Player, PlayerSnapshot, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
+import { FplChip } from '../common/enums/chip.enum';
 
 describe('AlertService', () => {
   let service: AlertService;
   let telegram: {
     sendProposalAlert: jest.Mock;
     sendMessage: jest.Mock;
+    sendAppliedCheckIn: jest.Mock;
   };
 
   const players: Player[] = [
@@ -85,6 +87,7 @@ describe('AlertService', () => {
     telegram = {
       sendProposalAlert: jest.fn(),
       sendMessage: jest.fn(),
+      sendAppliedCheckIn: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -195,5 +198,41 @@ describe('AlertService', () => {
     await service.sendMessage('hello');
 
     expect(telegram.sendMessage).toHaveBeenCalledWith('hello');
+  });
+
+  describe('sendAppliedCheckIn', () => {
+    it('summarizes a no-op proposal', async () => {
+      await service.sendAppliedCheckIn(proposal);
+
+      const [text, proposalId] = telegram.sendAppliedCheckIn.mock
+        .calls[0] as [string, string];
+      expect(proposalId).toBe('prop-1');
+      expect(text).toContain('GW4');
+      expect(text).toContain('The proposal was: no changes.');
+    });
+
+    it('summarizes transfers', async () => {
+      await service.sendAppliedCheckIn({
+        ...proposal,
+        transfers: [{ playerOutId: 3, playerInId: 4 }],
+      });
+
+      const [text] = telegram.sendAppliedCheckIn.mock.calls[0] as [string];
+      expect(text).toContain('The proposal was: 1 transfer.');
+    });
+
+    it('summarizes multiple transfers plus a chip', async () => {
+      await service.sendAppliedCheckIn({
+        ...proposal,
+        transfers: [
+          { playerOutId: 3, playerInId: 4 },
+          { playerOutId: 5, playerInId: 6 },
+        ],
+        chip: FplChip.WILDCARD,
+      });
+
+      const [text] = telegram.sendAppliedCheckIn.mock.calls[0] as [string];
+      expect(text).toContain('The proposal was: 2 transfers + wildcard.');
+    });
   });
 });

@@ -40,6 +40,33 @@ export class AlertService {
     await this.telegram.sendMessage(text);
   }
 
+  // Post-deadline check-in for a proposal that went unanswered (or whose
+  // reply arrived too late) — purely to label the real-world outcome for
+  // future backtesting (CLAUDE.md step 5). Never gates or re-triggers
+  // execution; the hard "silence means do nothing" rule already applied
+  // before this fires.
+  async sendAppliedCheckIn(proposal: Proposal): Promise<void> {
+    const changeSummary =
+      proposal.transfers.length === 0 && !proposal.chip
+        ? 'no changes'
+        : [
+            proposal.transfers.length > 0
+              ? `${proposal.transfers.length} transfer${proposal.transfers.length === 1 ? '' : 's'}`
+              : undefined,
+            proposal.chip ? `${proposal.chip}` : undefined,
+          ]
+            .filter(Boolean)
+            .join(' + ');
+
+    const text = [
+      `❓ *GW${proposal.gameweekId} — the deadline has passed.*`,
+      `The proposal was: ${changeSummary}.`,
+      "Did you end up making that change yourself in the FPL app? (Just for my own tracking — doesn't affect anything.)",
+    ].join('\n');
+
+    await this.telegram.sendAppliedCheckIn(text, proposal.id);
+  }
+
   // Thin passthrough so callers outside AlertModule (e.g. TeamStateService)
   // never need TelegramAdapter injected directly — AlertModule only exports
   // AlertService, keeping the Telegram bot instance encapsulated.
