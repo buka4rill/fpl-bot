@@ -845,6 +845,38 @@ going through a PR, while anyone else must go through an approved PR.
 `pull_request` (not `pull_request_target`), so a fork's PR never gets
 repo secrets, checked as part of the same pass.
 
+**Correction, same day: "1 approval" alone doesn't mean *your* approval —
+and there's no way to force that on a personal repo.** The 1-approval rule
+above is satisfied by an approving review from *anyone* with read access,
+which on a public repo means any GitHub account — not specifically
+`buka4rill`. First fix tried: a `.github/CODEOWNERS` file (`* @buka4rill`)
+plus `require_code_owner_reviews: true`, which does correctly force the
+counted approval to be the owner's (verified live with a real throwaway
+PR — GitHub reported it `BLOCKED`/`REVIEW_REQUIRED`, and as a nice side
+effect GitHub won't let a PR's own author approve their own PR, so this
+only ever gates *other* people's PRs). **Reverted the same day** —
+decided instead that anyone should be able to *approve* a PR, with
+merging itself the thing restricted to the owner. The natural mechanism
+for that is branch protection's `restrictions` (push restrictions,
+which also gate merging since a merge is a push under the hood) — but
+the API rejected it outright: `"Only organization repositories can have
+users and team restrictions"`. **This repo is a personal-account repo,
+not an organization-owned one, so per-user push restrictions don't exist
+here at all** — not a config mistake, a real GitHub plan/ownership-tier
+limitation. `require_code_owner_reviews` is back to `false`
+(`required_approving_review_count: 1` stays, satisfied by any approver);
+`CODEOWNERS` is kept (harmless, still auto-requests `buka4rill` as
+reviewer on every PR) but is no longer an enforcement mechanism. What
+actually guarantees "only I can merge" now is plain **collaborator
+permissions** — `buka4rill` is the sole collaborator with write access
+(confirmed live via the API), and merging has always required write
+access regardless of branch protection. That holds today but isn't
+*structural* the way the CODEOWNERS approach was — if a collaborator is
+ever added at Write+ level, they could approve their own PR (no code-owner
+gate) and merge it themselves. Revisit then: either grant future
+collaborators only Read/Triage (never Write), or move the repo into a
+free GitHub organization, where `restrictions` becomes available again.
+
 **`fly launch` gotcha, hit live during the actual launch — watch for this
 if the app is ever relaunched or launched fresh elsewhere:** even with
 `--copy-config` (meant to respect the existing `fly.toml`/`Dockerfile`

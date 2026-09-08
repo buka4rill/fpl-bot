@@ -1,5 +1,10 @@
-# Every path defaults to the repo owner — required so branch protection's
-# "require code owner reviews" on main actually restricts approval to
-# buka4rill specifically, not just "anyone with 1 approval" (a public repo
-# lets any GitHub user leave an approving review otherwise).
+# Every path defaults to the repo owner. Not an enforcement mechanism —
+# require_code_owner_reviews on main is deliberately off (any 1 approval
+# satisfies the PR review requirement now, see CLAUDE.md's "Deploy
+# (Fly.io) + CI/CD" section) — this just makes GitHub auto-request
+# buka4rill as a reviewer on every new PR. The actual "only I can merge"
+# guarantee is collaborator permissions (buka4rill is the sole
+# collaborator with write access), not a branch-protection push
+# restriction — that GitHub feature only exists for organization-owned
+# repos, and this one is a personal-account repo.
 * @buka4rill
