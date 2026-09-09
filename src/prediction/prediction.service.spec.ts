@@ -14,6 +14,7 @@ import {
   SquadRules,
 } from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 import { GameweekEntity } from '../persistence/entities/gameweek.entity';
 import { PlayerSnapshotEntity } from '../persistence/entities/player-snapshot.entity';
 
@@ -225,6 +226,23 @@ describe('PredictionService', () => {
         ...prediction,
         gameweekId: 4, // overridden to the target gameweek, not the snapshot's own (current) gameweekId of 3
         season: '26_27',
+        source: TriggerSource.MANUAL, // predictGameweek() defaults to MANUAL when no source is given
+      })),
+    );
+  });
+
+  it('tags snapshot history with the given source (AUTO for the scheduler)', async () => {
+    const predicted = [{ ...snapshots[0], predictedPoints: 5 }];
+    strategy.predict.mockResolvedValue(predicted);
+
+    await service.predictGameweek(TriggerSource.AUTO);
+
+    expect(playerSnapshotRepository.save).toHaveBeenCalledWith(
+      predicted.map((prediction) => ({
+        ...prediction,
+        gameweekId: 4,
+        season: '26_27',
+        source: TriggerSource.AUTO,
       })),
     );
   });

@@ -15,6 +15,7 @@ import {
 } from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 export interface SquadOptimizationResult {
   targetGameweek: Gameweek;
@@ -65,8 +66,9 @@ export class SquadOptimizerService {
   async optimizeSquad(
     freeTransfers = 1,
     chip?: FplChip,
+    source: TriggerSource = TriggerSource.MANUAL,
   ): Promise<SquadOptimizationResult> {
-    const prediction = await this.predictionService.predictGameweek();
+    const prediction = await this.predictionService.predictGameweek(source);
     return this.evaluateStrategy(prediction, freeTransfers, chip);
   }
 

@@ -11,6 +11,7 @@ import { Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { ProposalEntity } from '../persistence/entities/proposal.entity';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 @Injectable()
 export class ProposalService {
@@ -29,10 +30,12 @@ export class ProposalService {
   async generateProposal(
     freeTransfers?: number,
     chip?: FplChip,
+    source: TriggerSource = TriggerSource.MANUAL,
   ): Promise<Proposal> {
     const optimization = await this.squadOptimizerService.optimizeSquad(
       freeTransfers,
       chip,
+      source,
     );
 
     return this.store({
@@ -52,6 +55,7 @@ export class ProposalService {
       // squad too); this is the new plan's own expected total.
       expectedGain: optimization.totalPredictedPoints - optimization.hitCost,
       hitCost: optimization.hitCost,
+      source,
     });
   }
 
@@ -62,11 +66,13 @@ export class ProposalService {
   async generateBestProposal(
     freeTransfers?: number,
     availableChips?: FplChip[],
+    source: TriggerSource = TriggerSource.MANUAL,
   ): Promise<{ proposal: Proposal; candidates: ChipCandidate[] }> {
     const { best, candidates } =
       await this.chipEvaluatorService.evaluateBestStrategy(
         freeTransfers,
         availableChips,
+        source,
       );
     // ChipEvaluatorService always evaluates a chip-free candidate too —
     // persisted here (only when the winner actually has a chip) so
@@ -101,6 +107,7 @@ export class ProposalService {
       expectedGain: best.netExpectedPoints,
       hitCost: best.optimization.hitCost,
       noChipAlternative,
+      source,
     });
     return { proposal, candidates };
   }
@@ -155,13 +162,21 @@ export class ProposalService {
     return proposal ?? undefined;
   }
 
-  // Restart-safe "have we already proposed for this gameweek" lookup —
-  // consumed by DeadlineWatcherService instead of an in-memory dedupe flag.
-  // `season` is required alongside `gameweekId`: FPL resets gameweek ids to
-  // 1 every season, so a lookup on `gameweekId` alone would match a prior
-  // season's proposal and silently skip generating a new one. Not unique by
-  // (season, gameweekId) either (see ProposalEntity's comment), so this
-  // returns whichever proposal was created first for the pair.
+  // Restart-safe "have we already *automatically* proposed for this
+  // gameweek" lookup — consumed by DeadlineWatcherService instead of an
+  // in-memory dedupe flag. `season` is required alongside `gameweekId`: FPL
+  // resets gameweek ids to 1 every season, so a lookup on `gameweekId` alone
+  // would match a prior season's proposal and silently skip generating a
+  // new one. Not unique by (season, gameweekId) either (see ProposalEntity's
+  // comment), so this returns whichever proposal was created first for the
+  // pair.
+  //
+  // Scoped to source: AUTO (2026-09-09 fix) — a MANUAL proposal (a testing
+  // call, /propose, /chip) must never block the scheduler's own automatic
+  // proposal for that gameweek. This is exactly what happened to GW4 on
+  // 2026-09-08: ~10 manual execution-testing proposals persisted before this
+  // fix meant the scheduler saw "already proposed" and silently never
+  // generated a real automatic one for that gameweek at all.
   async findBySeasonAndGameweekId(
     season: string,
     gameweekId: number,
@@ -169,6 +184,7 @@ export class ProposalService {
     const proposal = await this.proposalRepository.findOneBy({
       season,
       gameweekId,
+      source: TriggerSource.AUTO,
     });
     return proposal ?? undefined;
   }

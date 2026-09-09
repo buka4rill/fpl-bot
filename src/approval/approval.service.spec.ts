@@ -8,6 +8,7 @@ import { AlertService } from '../alert/alert.service';
 import { Approval, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 import { ApprovalEntity } from '../persistence/entities/approval.entity';
 
 describe('ApprovalService', () => {
@@ -41,6 +42,7 @@ describe('ApprovalService', () => {
     hitCost: 0,
     status: ProposalStatus.PENDING,
     createdAt: '2026-01-01T00:00:00Z',
+    source: TriggerSource.AUTO,
     ...overrides,
   });
 

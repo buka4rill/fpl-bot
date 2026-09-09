@@ -12,6 +12,7 @@ import { ApprovalService } from '../approval/approval.service';
 import { TeamStateService } from '../team-state/team-state.service';
 import { AuthService } from '../auth/auth.service';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 // Polls hourly rather than daily (ARCHITECTURE.md's "coarse, e.g. daily"
 // suggestion) so the trigger window is never missed even with a small
@@ -147,6 +148,7 @@ export class DeadlineWatcherService implements OnModuleInit, OnModuleDestroy {
         await this.proposalService.generateBestProposal(
           teamState.freeTransfers,
           availableChips,
+          TriggerSource.AUTO,
         );
       await this.alertService.sendProposal(
         proposal,

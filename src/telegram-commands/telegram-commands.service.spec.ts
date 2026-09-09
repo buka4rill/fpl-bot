@@ -15,6 +15,7 @@ import {
 } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 describe('TelegramCommandsService', () => {
   let service: TelegramCommandsService;
@@ -66,6 +67,7 @@ describe('TelegramCommandsService', () => {
     hitCost: 0,
     status: ProposalStatus.PENDING,
     createdAt: '2026-09-05T00:00:00Z',
+    source: TriggerSource.MANUAL,
   };
 
   beforeEach(async () => {
@@ -146,7 +148,11 @@ describe('TelegramCommandsService', () => {
 
       expect(authService.assertAuthenticated).toHaveBeenCalled();
       expect(teamStateService.reportTeamState).toHaveBeenCalledWith(4);
-      expect(proposalService.generateBestProposal).toHaveBeenCalledWith(2, []);
+      expect(proposalService.generateBestProposal).toHaveBeenCalledWith(
+        2,
+        [],
+        TriggerSource.MANUAL,
+      );
       expect(alertService.sendProposal).toHaveBeenCalledWith(
         proposal,
         players,
@@ -192,6 +198,7 @@ describe('TelegramCommandsService', () => {
       expect(proposalService.generateProposal).toHaveBeenCalledWith(
         undefined,
         FplChip.BENCH_BOOST,
+        TriggerSource.MANUAL,
       );
       expect(alertService.sendProposal).toHaveBeenCalledWith(
         proposal,
@@ -206,6 +213,7 @@ describe('TelegramCommandsService', () => {
       expect(proposalService.generateProposal).toHaveBeenCalledWith(
         undefined,
         FplChip.TRIPLE_CAPTAIN,
+        TriggerSource.MANUAL,
       );
     });
 

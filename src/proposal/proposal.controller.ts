@@ -8,6 +8,7 @@ import { TeamStateService } from '../team-state/team-state.service';
 import { AuthService } from '../auth/auth.service';
 import { Proposal } from '../common/types/domain.types';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 @Controller('proposal')
 export class ProposalController {
@@ -46,6 +47,7 @@ export class ProposalController {
       await this.proposalService.generateBestProposal(
         teamState.freeTransfers,
         availableChips,
+        TriggerSource.MANUAL,
       );
 
     await this.alertService.sendProposal(
@@ -90,6 +92,7 @@ export class ProposalController {
       viceCaptainId: squad.captainId, // swapped
       expectedGain: 0,
       hitCost: 0,
+      source: TriggerSource.MANUAL,
     });
 
     await this.alertService.sendProposal(proposal, players, snapshots);
@@ -164,6 +167,7 @@ export class ProposalController {
       viceCaptainId: squad.viceCaptainId,
       expectedGain: 0,
       hitCost: 0,
+      source: TriggerSource.MANUAL,
     });
 
     await this.alertService.sendProposal(proposal, players, snapshots);
@@ -187,7 +191,11 @@ export class ProposalController {
     await this.authService.assertAuthenticated();
 
     const [proposal, { players, snapshots }] = await Promise.all([
-      this.proposalService.generateProposal(body.freeTransfers, body.chip),
+      this.proposalService.generateProposal(
+        body.freeTransfers,
+        body.chip,
+        TriggerSource.MANUAL,
+      ),
       this.ingestionService.getBootstrapSnapshot(),
     ]);
 
@@ -244,6 +252,7 @@ export class ProposalController {
       chip: body.chip,
       expectedGain: 0,
       hitCost: 0,
+      source: TriggerSource.MANUAL,
     });
 
     await this.alertService.sendProposal(proposal, players, snapshots);

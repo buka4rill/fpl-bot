@@ -1,6 +1,7 @@
 import { FplChip } from '../enums/chip.enum';
 import { ProposalStatus } from '../enums/proposal-status.enum';
 import { Position } from '../enums/position.enum';
+import { TriggerSource } from '../enums/trigger-source.enum';
 
 // Plain interfaces standing in for the ARCHITECTURE.md §6 schema sketch.
 // Promote these to ORM entities once a persistence layer is chosen.
@@ -140,6 +141,11 @@ export interface Proposal {
   hitCost: number;
   status: ProposalStatus;
   createdAt: string;
+  // AUTO (the scheduler's own hourly poll) or MANUAL (any on-demand
+  // trigger — /propose, /chip, or a testing endpoint). Only AUTO proposals
+  // count as real backtesting signal or block the scheduler's own dedupe
+  // check — see TriggerSource's doc comment.
+  source: TriggerSource;
   // Only meaningful once status is EXPIRED — null/undefined otherwise (never
   // asked). Answered via a post-deadline Telegram Yes/No check-in purely to
   // label the outcome for future backtesting (step 5); it never gates or

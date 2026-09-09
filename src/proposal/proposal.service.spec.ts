@@ -10,6 +10,7 @@ import {
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { ProposalEntity } from '../persistence/entities/proposal.entity';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 // Minimal in-memory stand-in for Repository<ProposalEntity>, covering only
 // the methods ProposalService actually calls — mirrors the real Postgres
@@ -36,7 +37,8 @@ class FakeProposalRepository {
         rows.find(
           (row) =>
             row.gameweekId === where.gameweekId &&
-            (where.season === undefined || row.season === where.season),
+            (where.season === undefined || row.season === where.season) &&
+            (where.source === undefined || row.source === where.source),
         ) ?? null,
       );
     }
@@ -141,7 +143,11 @@ describe('ProposalService', () => {
   });
 
   it('finds a proposal by season + gameweek id', async () => {
-    const proposal = await service.generateProposal();
+    const proposal = await service.generateProposal(
+      undefined,
+      undefined,
+      TriggerSource.AUTO,
+    );
 
     expect(await service.findBySeasonAndGameweekId('26_27', 4)).toEqual(
       proposal,
@@ -155,9 +161,20 @@ describe('ProposalService', () => {
     // Regression test: FPL resets gameweek ids to 1 each season, so a plain
     // gameweekId lookup would find last season's GW4 row and wrongly report
     // "already proposed" for the new season's GW4.
-    await service.generateProposal();
+    await service.generateProposal(undefined, undefined, TriggerSource.AUTO);
 
     expect(await service.findBySeasonAndGameweekId('27_28', 4)).toBeUndefined();
+  });
+
+  it('does not match a MANUAL proposal — only AUTO blocks the scheduler dedupe', async () => {
+    // Regression test for the real GW4 incident (2026-09-08): manual
+    // testing calls (/propose, /proposal/chip, etc.) persisted proposals
+    // for a gameweek the scheduler had never automatically proposed for
+    // yet, and the old source-blind lookup treated that as "already
+    // proposed," silently skipping the real automatic proposal forever.
+    await service.generateProposal(); // defaults to MANUAL
+
+    expect(await service.findBySeasonAndGameweekId('26_27', 4)).toBeUndefined();
   });
 
   it('lists only PENDING proposals', async () => {
@@ -210,6 +227,7 @@ describe('ProposalService', () => {
     expect(squadOptimizerService.optimizeSquad).toHaveBeenCalledWith(
       2,
       undefined,
+      TriggerSource.MANUAL,
     );
   });
 
@@ -219,8 +237,24 @@ describe('ProposalService', () => {
     expect(squadOptimizerService.optimizeSquad).toHaveBeenCalledWith(
       1,
       FplChip.WILDCARD,
+      TriggerSource.MANUAL,
     );
     expect(proposal.chip).toBe(FplChip.WILDCARD);
+  });
+
+  it('passes source through to the optimizer and onto the stored proposal', async () => {
+    const proposal = await service.generateProposal(
+      1,
+      undefined,
+      TriggerSource.AUTO,
+    );
+
+    expect(squadOptimizerService.optimizeSquad).toHaveBeenCalledWith(
+      1,
+      undefined,
+      TriggerSource.AUTO,
+    );
+    expect(proposal.source).toBe(TriggerSource.AUTO);
   });
 
   describe('generateBestProposal', () => {
@@ -255,7 +289,28 @@ describe('ProposalService', () => {
       expect(chipEvaluatorService.evaluateBestStrategy).toHaveBeenCalledWith(
         2,
         [FplChip.BENCH_BOOST],
+        TriggerSource.MANUAL,
       );
+    });
+
+    it('passes source through to the evaluator and onto the stored proposal', async () => {
+      chipEvaluatorService.evaluateBestStrategy.mockResolvedValue({
+        best: candidates[0],
+        candidates,
+      });
+
+      const { proposal } = await service.generateBestProposal(
+        undefined,
+        undefined,
+        TriggerSource.AUTO,
+      );
+
+      expect(chipEvaluatorService.evaluateBestStrategy).toHaveBeenCalledWith(
+        undefined,
+        undefined,
+        TriggerSource.AUTO,
+      );
+      expect(proposal.source).toBe(TriggerSource.AUTO);
     });
 
     it('persists the chip-free candidate as noChipAlternative when the winner has a chip', async () => {

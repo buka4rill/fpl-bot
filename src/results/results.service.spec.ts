@@ -7,6 +7,7 @@ import { AlertService } from '../alert/alert.service';
 import { Gameweek, Player, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 describe('ResultsService', () => {
   let service: ResultsService;
@@ -65,6 +66,7 @@ describe('ResultsService', () => {
     hitCost: 0,
     status: ProposalStatus.APPROVED,
     createdAt: '2026-09-05T00:00:00Z',
+    source: TriggerSource.AUTO,
     ...overrides,
   });
 

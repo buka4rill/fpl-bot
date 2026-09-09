@@ -6,6 +6,7 @@ import {
   SquadOptimizerService,
 } from './squad-optimizer.service';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 export interface ChipCandidate {
   chip?: FplChip;
@@ -34,8 +35,9 @@ export class ChipEvaluatorService {
   async evaluateBestStrategy(
     freeTransfers?: number,
     availableChips: FplChip[] = Object.values(FplChip),
+    source: TriggerSource = TriggerSource.MANUAL,
   ): Promise<{ best: ChipCandidate; candidates: ChipCandidate[] }> {
-    const prediction = await this.predictionService.predictGameweek();
+    const prediction = await this.predictionService.predictGameweek(source);
     const pointsByPlayerId = new Map(
       prediction.predictions.map((p) => [p.playerId, p.predictedPoints ?? 0]),
     );

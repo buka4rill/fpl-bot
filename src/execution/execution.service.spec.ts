@@ -7,6 +7,7 @@ import { FplPick } from '../auth/clients/fpl-auth.types';
 import { ExecutionLog, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 import { ExecutionLogEntity } from '../persistence/entities/execution-log.entity';
 import { IngestionService } from '../ingestion/ingestion.service';
 
@@ -54,6 +55,7 @@ describe('ExecutionService', () => {
     hitCost: 0,
     status: ProposalStatus.APPROVED,
     createdAt: '2026-01-01T00:00:00Z',
+    source: TriggerSource.AUTO,
     ...overrides,
   });
 

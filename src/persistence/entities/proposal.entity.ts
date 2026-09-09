@@ -6,6 +6,7 @@ import {
 } from '../../common/types/domain.types';
 import { ProposalStatus } from '../../common/enums/proposal-status.enum';
 import { FplChip } from '../../common/enums/chip.enum';
+import { TriggerSource } from '../../common/enums/trigger-source.enum';
 
 // (season, gameweekId) is deliberately indexed, not unique: ProposalController's
 // manual captain-swap override can legitimately create a second proposal
@@ -24,6 +25,13 @@ export class ProposalEntity implements Proposal {
 
   @Column('int')
   gameweekId: number;
+
+  // Defaults to MANUAL at the DB level purely so the migration can backfill
+  // existing rows safely — every code path already supplies this explicitly
+  // (Proposal.source is required on the domain interface), this default is
+  // defense-in-depth, not load-bearing.
+  @Column({ type: 'enum', enum: TriggerSource, default: TriggerSource.MANUAL })
+  source: TriggerSource;
 
   @Column({ type: 'timestamptz' })
   deadlineAt: string;

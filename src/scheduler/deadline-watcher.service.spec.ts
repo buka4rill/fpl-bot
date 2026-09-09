@@ -16,6 +16,7 @@ import {
 import { computeSeason } from '../common/utils/season.util';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 describe('DeadlineWatcherService', () => {
   let service: DeadlineWatcherService;
@@ -61,6 +62,7 @@ describe('DeadlineWatcherService', () => {
     hitCost: 0,
     status: ProposalStatus.PENDING,
     createdAt: '2026-09-05T00:00:00Z',
+    source: TriggerSource.AUTO,
   };
 
   const gameweekWithDeadline = (deadlineAt: string): Gameweek => ({
@@ -172,7 +174,11 @@ describe('DeadlineWatcherService', () => {
     await service.checkDeadline();
 
     expect(proposalService.generateBestProposal).toHaveBeenCalledTimes(1);
-    expect(proposalService.generateBestProposal).toHaveBeenCalledWith(1, []);
+    expect(proposalService.generateBestProposal).toHaveBeenCalledWith(
+      1,
+      [],
+      TriggerSource.AUTO,
+    );
     expect(alertService.sendProposal).toHaveBeenCalledWith(
       proposal,
       players,
@@ -197,7 +203,11 @@ describe('DeadlineWatcherService', () => {
     await service.checkDeadline();
 
     expect(teamStateService.reportTeamState).toHaveBeenCalledWith(4);
-    expect(proposalService.generateBestProposal).toHaveBeenCalledWith(3, []);
+    expect(proposalService.generateBestProposal).toHaveBeenCalledWith(
+      3,
+      [],
+      TriggerSource.AUTO,
+    );
   });
 
   it('blocks proposal generation and prompts once when not authenticated', async () => {

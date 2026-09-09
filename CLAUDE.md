@@ -174,6 +174,50 @@ their `season` column (falls back to "any known season" for rows the
 `gameweekId` join can't match, safe since only one season of data existed
 pre-fix).
 
+**AUTO/MANUAL source tagging (2026-09-09)** — `Proposal.source`/
+`PlayerSnapshotEntity.source` (`TriggerSource`, `src/common/enums/trigger-source.enum.ts`)
+tags every row with who created it: `AUTO` (`DeadlineWatcherService`'s own
+hourly poll — the only real automatic weekly decision) or `MANUAL` (every
+on-demand trigger: `/propose`, `/chip`, `/proposal/generate`, and the
+testing-scaffolding endpoints — `captain-swap`/`manual-transfer`/`chip-manual`).
+Threaded through the whole prediction/optimization chain
+(`ProposalService.generateProposal`/`generateBestProposal` →
+`SquadOptimizerService.optimizeSquad` / `ChipEvaluatorService.evaluateBestStrategy`
+→ `PredictionService.predictGameweek` → `recordSnapshotHistory`), defaulting
+to `MANUAL` everywhere except the one call site
+(`DeadlineWatcherService.checkDeadline`) that explicitly passes `AUTO` — the
+safe default, since a forgotten `source` argument should never silently
+count as trustworthy backtesting signal. Migration
+`AddSourceToProposalsAndPlayerSnapshots` backfills every pre-existing row to
+`MANUAL` (accurate: the scheduler had never yet completed a clean automatic
+run before this shipped).
+
+Motivated directly by the GW4 incident this same file already documents
+under "Step 5's data checkpoint": manual execution testing on 2026-09-08
+left ~10 `proposals` rows (and a matching burst of `player_snapshots` rows —
+every `predictGameweek()` call writes a fresh batch, testing or not) for a
+gameweek the scheduler had never actually auto-proposed for. Two things
+follow from the tag: (1) `ProposalService.findBySeasonAndGameweekId` — the
+scheduler's restart-safe "already proposed this gameweek" dedupe — is now
+scoped to `source: AUTO` only, so a MANUAL row can never again block the
+real automatic proposal for that gameweek (this unblocks GW4 itself,
+without deleting anything: the scheduler will now propose for it normally
+once its trigger window opens); (2) step 5's eventual backtesting query
+should filter `source = 'AUTO'` rather than needing to know which
+gameweeks happened to get manually contaminated.
+
+Deliberately *not* built in this pass (raised in discussion, tracked as
+follow-up work, not a GitHub issue yet): detecting when an *executed*
+AUTO proposal is later manually altered in the FPL app before kickoff
+(chip un-activated, lineup edited by hand) — `source` only tags who
+*generated* the proposal, not whether what actually happened at kickoff
+still matches it. `ResultsService`'s predicted-vs-actual comparison has no
+signal for that divergence today; it would need cross-checking the
+finished gameweek's real `active_chip`/final picks (already available from
+the same public picks endpoint `ResultsService` already calls) against the
+stored proposal, and excluding a diverged week from whatever step 5
+eventually trains on.
+
 **Pinned versions matter here**: `@nestjs/typeorm@12.x` is ESM-only and
 won't load under this project's CommonJS setup on Node 20 (breaks Jest and
 `ts-node` alike) — use `@nestjs/typeorm@^11.0.3` with `typeorm@^0.3.x`.
@@ -1273,21 +1317,32 @@ timeline section for reasoning, not duplicated here.
 "half a season" (2026-09-09).** Checked live: prod only began generating
 real automated proposals from GW4 onward (deploy day, 2026-09-08); GW4
 itself is contaminated as backtesting data (all ~10 of its `proposals` rows
-are same-day manual execution tests — real transfers/chips applied and
+were same-day manual execution tests — real transfers/chips applied and
 reverted repeatedly against the live account, not one clean weekly
-decision), so the clean count effectively starts at GW5 (deadline
-2026-09-18). Cross-checked against the real 2026/27 fixture calendar: the
-15-19-gameweek threshold from GW5 lands on GW20-24, whose deadlines fall
-2027-01-06 to 2027-01-30 — so realistically **not before January 2027,
-more likely January-February 2027**. Verify the real count periodically
-rather than trusting this projection as it ages:
+decision). Cross-checked against the real 2026/27 fixture calendar: the
+15-19-gameweek threshold lands on GW20-24, whose deadlines fall 2027-01-06
+to 2027-01-30 — so realistically **not before January 2027, more likely
+January-February 2027**. Verify the real count periodically rather than
+trusting this projection as it ages:
 ```sql
-SELECT count(DISTINCT (season, "gameweekId")) FROM proposals WHERE "resultReportedAt" IS NOT NULL;
+SELECT count(DISTINCT (season, "gameweekId")) FROM proposals
+WHERE "resultReportedAt" IS NOT NULL AND source = 'AUTO';
 ```
+(the `source = 'AUTO'` filter is the AUTO/MANUAL tagging fix above,
+2026-09-09 — without it this count still includes GW4's contaminated rows)
 run via `fly postgres connect -a fpl-bot-buka4rill-db` (see README's
 "Production (Fly.io)" section for the connection gotchas — it drops you
 into the `postgres` database, not the app's `fpl_bot_buka4rill` one, and
 `flyctl` may not be on `PATH` in every shell even once installed).
+
+Note that GW4 is no longer permanently excluded the way it was before the
+AUTO/MANUAL fix: its manual-testing rows can no longer block the
+scheduler's own dedupe check (that check is now scoped to `source: AUTO`),
+so `DeadlineWatcherService` will propose for GW4 normally once its own
+trigger window opens (deadline 2026-09-12T12:30 UTC, so the window opens
+2026-09-11T12:30 UTC) — it just won't count toward the *clean* history
+above, since by then the account's actual squad already reflects that
+testing.
 
 ## Open question: keep auto-execution, or go notification-only? (deferred, not decided)
 

@@ -5,6 +5,7 @@ import { Player, PlayerSnapshot, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 describe('AlertService', () => {
   let service: AlertService;
@@ -82,6 +83,7 @@ describe('AlertService', () => {
     hitCost: 0,
     status: ProposalStatus.PENDING,
     createdAt: '2026-09-05T00:00:00Z',
+    source: TriggerSource.AUTO,
   };
 
   beforeEach(async () => {

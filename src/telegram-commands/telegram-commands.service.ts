@@ -6,6 +6,7 @@ import { AuthService } from '../auth/auth.service';
 import { AlertService } from '../alert/alert.service';
 import { ResultsService } from '../results/results.service';
 import { FplChip } from '../common/enums/chip.enum';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 const CHIP_NAMES = Object.values(FplChip).join('|');
 
@@ -124,6 +125,7 @@ export class TelegramCommandsService {
       await this.proposalService.generateBestProposal(
         teamState.freeTransfers,
         availableChips,
+        TriggerSource.MANUAL,
       );
     await this.alertService.sendProposal(
       proposal,
@@ -152,7 +154,11 @@ export class TelegramCommandsService {
     }
     await this.authService.assertAuthenticated();
     const [proposal, { players, snapshots }] = await Promise.all([
-      this.proposalService.generateProposal(undefined, chip),
+      this.proposalService.generateProposal(
+        undefined,
+        chip,
+        TriggerSource.MANUAL,
+      ),
       this.ingestionService.getBootstrapSnapshot(),
     ]);
     await this.alertService.sendProposal(proposal, players, snapshots);

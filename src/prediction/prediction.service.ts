@@ -15,6 +15,7 @@ import {
 } from '../common/types/domain.types';
 import { GameweekEntity } from '../persistence/entities/gameweek.entity';
 import { PlayerSnapshotEntity } from '../persistence/entities/player-snapshot.entity';
+import { TriggerSource } from '../common/enums/trigger-source.enum';
 
 export interface PredictionResult {
   players: Player[];
@@ -41,7 +42,12 @@ export class PredictionService {
     private readonly playerSnapshotRepository: Repository<PlayerSnapshotEntity>,
   ) {}
 
-  async predictGameweek(): Promise<PredictionResult> {
+  // `source` defaults to MANUAL — the safe default for the many on-demand
+  // call sites (/propose, /chip, testing endpoints); only DeadlineWatcherService
+  // passes AUTO. See TriggerSource's doc comment.
+  async predictGameweek(
+    source: TriggerSource = TriggerSource.MANUAL,
+  ): Promise<PredictionResult> {
     const [{ players, snapshots, rules, gameweeks }, fixtures] =
       await Promise.all([
         this.ingestionService.getBootstrapSnapshot(),
@@ -81,7 +87,7 @@ export class PredictionService {
       fixtures,
     );
     const predictions = await this.strategy.predict(enriched);
-    await this.recordSnapshotHistory(targetGameweek, predictions);
+    await this.recordSnapshotHistory(targetGameweek, predictions, source);
     return { players, rules, targetGameweek, currentSquad, predictions };
   }
 
@@ -94,6 +100,7 @@ export class PredictionService {
   private async recordSnapshotHistory(
     targetGameweek: Gameweek,
     predictions: PlayerSnapshot[],
+    source: TriggerSource,
   ): Promise<void> {
     try {
       await this.gameweekRepository.save(
@@ -114,6 +121,7 @@ export class PredictionService {
             ...prediction,
             gameweekId: targetGameweek.id,
             season: targetGameweek.season,
+            source,
           }),
         ),
       );

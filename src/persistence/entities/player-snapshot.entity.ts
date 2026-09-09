@@ -1,6 +1,7 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import { PlayerSnapshot } from '../../common/types/domain.types';
 import { Position } from '../../common/enums/position.enum';
+import { TriggerSource } from '../../common/enums/trigger-source.enum';
 
 // One row per (season, gameweek, player) — not overwritten across
 // gameweeks, so this is the backtestable history ARCHITECTURE.md §6 calls
@@ -61,4 +62,12 @@ export class PlayerSnapshotEntity implements PlayerSnapshot {
 
   @Column({ type: 'timestamptz', default: () => 'now()' })
   capturedAt: string;
+
+  // Persistence-only, same pattern as `season` above — not on the
+  // PlayerSnapshot domain interface, since PredictionService.recordSnapshotHistory
+  // is the only place this is known when a snapshot entity is created.
+  // Defaults to MANUAL at the DB level purely so the migration can backfill
+  // existing rows safely (see ProposalEntity.source's comment).
+  @Column({ type: 'enum', enum: TriggerSource, default: TriggerSource.MANUAL })
+  source: TriggerSource;
 }
