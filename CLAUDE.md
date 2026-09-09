@@ -531,6 +531,50 @@ itself: it now says outright that this specific failure mode has been a
 false alarm before and tells the owner to check `/status` before assuming
 the worst, rather than flatly asserting the chip is unavailable.
 
+**The instrumentation above found the real bug on the very next occurrence
+— it was never timing at all.** A fourth test, same day, still failed even
+at the 120s budget. This time the new `chipConfirmationAttempts` logging
+(streamed live via `fly logs` while watching the test) showed the actual
+contradiction directly: retry 15/15's own recorded data included
+`{"name":"bboost","status_for_entry":"active","played_by_entry":[4]}` —
+the chip was genuinely active — yet that exact same check still logged
+`confirmed=false`. Every one of the first three "false negatives" was
+never a timing problem at all; widening the retry budget twice was fixing
+nothing.
+
+Root cause: `isChipPlayed` checked `played_by_entry.includes(teamId)` —
+but `played_by_entry` is FPL's list of **gameweek/event ids** this chip
+was played in (`[4]` meaning "played in gameweek 4"), not a list of
+team/entry ids. Confirmed live: this account's real `FPL_TEAM_ID` is
+`10594985`, which can never appear in a small list of gameweek numbers —
+so this confirmation check was structurally incapable of ever succeeding
+for this account, no matter the retry budget or delay. It also explains
+why the *initial* `setLineup`-response check (added 2026-09-08 for the
+Free Hit bug) "worked" back then: an empty `played_by_entry: []` for a
+genuinely-unplayed chip correctly read as unconfirmed either way (`[]`
+never contains anything), so the emptiness case masked the wrong
+comparison until a genuinely-active chip with a non-empty array was
+actually checked against the real (large) team id.
+
+Fixed by comparing against `proposal.gameweekId` instead of `teamId` — the
+`/my-team/{teamId}/` response is already scoped to *your* team by the URL
+itself, so there was never anything to disambiguate by team id in the
+first place; the real question is always "was this chip played in the
+gameweek I declared it for." `FplChipStatus.played_by_entry`'s doc comment
+(`fpl-auth.types.ts`) corrected to match. Every existing test fixture using
+`played_by_entry: [<mocked team id>]` was itself built on the same wrong
+assumption (masking this from the test suite exactly like the two bugs
+above) — fixed to use the proposal's own `gameweekId` instead, and
+verified by temporarily reverting the fix locally: 5 of 17 tests fail (one
+genuinely times out) against the old `teamId` comparison, confirming they
+actually exercise the real bug now.
+
+The retry budget and logging from the fix above are still worth keeping —
+FPL's `setLineup` response genuinely can lag behind a `getMyTeam` recheck
+(the original 2026-09-08 Bench Boost finding), just not anywhere near as
+often as these four incidents suggested once the real matching bug is
+gone.
+
 ## Open question: single-strategy optimizer vs. weighing strategies against each other (raised 2026-09-08, not decided)
 
 Even with the transfer-hit policy fix above, `SquadOptimizerService` still

@@ -193,7 +193,7 @@ describe('ExecutionService', () => {
         {
           name: 'bboost',
           status_for_entry: 'active',
-          played_by_entry: [6909032],
+          played_by_entry: [4],
         },
       ],
     });
@@ -218,7 +218,7 @@ describe('ExecutionService', () => {
         {
           name: 'wildcard',
           status_for_entry: 'active',
-          played_by_entry: [6909032],
+          played_by_entry: [4],
         },
       ],
     });
@@ -305,7 +305,7 @@ describe('ExecutionService', () => {
           {
             name: 'bboost',
             status_for_entry: 'active',
-            played_by_entry: [6909032],
+            played_by_entry: [4],
           },
         ],
         transfers: {},
@@ -370,7 +370,7 @@ describe('ExecutionService', () => {
         {
           name: 'bboost',
           status_for_entry: 'active',
-          played_by_entry: [6909032],
+          played_by_entry: [4],
         },
       ],
       transfers: {},
@@ -397,7 +397,7 @@ describe('ExecutionService', () => {
   it('confirms a chip via played_by_entry even if status_for_entry is not literally "active"', async () => {
     // The confirmed string values for team-type chips ('active') and
     // transfer-type chips (unobserved so far — see fpl-auth.types.ts) may
-    // differ; played_by_entry including this team's own id is the one
+    // differ; played_by_entry including the target gameweek is the one
     // signal already confirmed live for a real chip activation, so that's
     // what's checked, not a specific status string.
     fplAuthClient.setLineup.mockResolvedValue({
@@ -406,7 +406,7 @@ describe('ExecutionService', () => {
         {
           name: 'freehit',
           status_for_entry: 'played',
-          played_by_entry: [6909032],
+          played_by_entry: [4],
         },
       ],
     });

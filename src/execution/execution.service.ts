@@ -125,11 +125,11 @@ export class ExecutionService {
     // my-team state setLineup returns straight after still showed
     // status_for_entry: 'unavailable', played_by_entry: [] for freehit —
     // exactly the same shape a genuine failure would leave, just without an
-    // error to catch). The one signal that's actually confirmed a chip
-    // landing (Bench Boost/Triple Captain, verified live the same day) is
-    // played_by_entry including this team's own id in the response — so
-    // that's what's checked here for every chip, not just the ones that
-    // route through setLineup's own chip param.
+    // error to catch). The signal that actually confirms a chip landing is
+    // played_by_entry including the *gameweek* it was played in — see
+    // isChipPlayed's own comment for the real bug this was until
+    // 2026-09-09 (it compared against the team id instead, which can never
+    // match).
     let chipConfirmed = true;
     // Captured regardless of outcome (2026-09-09) — persisted into the
     // execution log below so a false negative can actually be diagnosed
@@ -148,7 +148,7 @@ export class ExecutionService {
       chipConfirmed = this.isChipPlayed(
         (lineupResult as FplMyTeam).chips,
         declaredChipName,
-        teamId,
+        proposal.gameweekId,
       );
       chipConfirmationAttempts.push({
         attempt: 0,
@@ -171,7 +171,7 @@ export class ExecutionService {
         chipConfirmed = this.isChipPlayed(
           recheck.chips,
           declaredChipName,
-          teamId,
+          proposal.gameweekId,
         );
         chipConfirmationAttempts.push({
           attempt,
@@ -219,15 +219,30 @@ export class ExecutionService {
     return log;
   }
 
+  // The real bug behind three false "execution FAILED" alerts in two days
+  // (2026-09-09) — `played_by_entry` is FPL's list of *gameweek/event ids*
+  // this chip was played in (a chip can be played at most once per half of
+  // the season, so this is a short list of event numbers, e.g. `[4]`
+  // meaning "played in gameweek 4" — not, as this used to assume, a list of
+  // team/entry ids). Comparing it against `teamId` could never match any
+  // real account (the response is already scoped to *your* team by the
+  // `/my-team/{teamId}/` URL itself — there's no other team to disambiguate
+  // from), so this confirmation check was structurally incapable of ever
+  // succeeding regardless of how many retries or how long the delay — every
+  // widening of the retry budget that day was chasing the wrong root cause.
+  // Diagnosed from the `chipConfirmationAttempts` log added the same day:
+  // the very last retry's own recorded data showed the chip genuinely
+  // active with `played_by_entry: [4]` (gameweek 4, correctly), yet still
+  // read as unconfirmed because `4 !== teamId` (10594985 for this account).
   private isChipPlayed(
     chips: FplChipStatus[],
     declaredChipName: string,
-    teamId: number,
+    gameweekId: number,
   ): boolean {
     return chips.some(
       (status) =>
         status.name === declaredChipName &&
-        status.played_by_entry.includes(teamId),
+        status.played_by_entry.includes(gameweekId),
     );
   }
 

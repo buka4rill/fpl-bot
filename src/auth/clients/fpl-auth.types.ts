@@ -23,6 +23,14 @@ export interface FplPick {
 export interface FplChipStatus {
   id: number;
   status_for_entry: string;
+  // Gameweek/event ids this chip was played in (2026-09-09, corrected —
+  // was wrongly assumed to be team/entry ids, which broke
+  // ExecutionService.isChipPlayed's confirmation check for three real
+  // executions before the mismatch was caught: a genuinely active chip
+  // logged `played_by_entry: [4]` — gameweek 4 — compared against a real
+  // team id like 10594985, which can never match). Confirmed live: an
+  // unplayed chip shows `[]`; a played one shows the gameweek(s) it was
+  // used in — at most 2 entries for bboost/3xc's twice-per-season rule.
   played_by_entry: number[];
   name: string;
   number: number;
