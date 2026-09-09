@@ -51,6 +51,14 @@ export interface AppConfig {
     user: string;
     password: string;
   };
+  narrative: {
+    // Unset means the feature is off, not misconfigured — NarrativeService
+    // treats a missing key as "skip the rationale for this alert" rather
+    // than throwing, same as every other best-effort feature in this app
+    // (see CLAUDE.md, issue #8).
+    anthropicApiKey: string | undefined;
+    model: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -89,5 +97,9 @@ export default (): AppConfig => ({
     name: process.env.DATABASE_NAME ?? 'fpl_bot',
     user: process.env.DATABASE_USER ?? 'fpl_bot',
     password: process.env.DATABASE_PASSWORD ?? 'fpl_bot',
+  },
+  narrative: {
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
+    model: process.env.NARRATIVE_MODEL ?? 'claude-haiku-4-5',
   },
 });

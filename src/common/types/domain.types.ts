@@ -214,6 +214,10 @@ export interface PlayerRecentForm {
   minutesConsidered: number;
   xgPer90: number;
   xaPer90: number;
+  // Rolling CBIT/CBIRT rate over the same window — the defender-relevant
+  // counterpart to xgPer90/xaPer90 above, since defenders rarely register
+  // meaningful xG/xA and their real value is usually defensive actions.
+  defensiveContributionPer90: number;
 }
 
 export interface Approval {

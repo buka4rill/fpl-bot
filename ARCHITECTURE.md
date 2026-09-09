@@ -35,6 +35,7 @@ flowchart TB
         TEAMSTATE["TeamStateModule<br/>(live free transfers + chips)"]
         PROPOSAL["ProposalModule"]
         ALERT["AlertModule"]
+        NARRATIVE["NarrativeModule<br/>(LLM rationale, issue #8)"]
         APPROVAL["ApprovalModule"]
         EXEC["ExecutionModule"]
         AUTH["AuthModule<br/>(holds the FPL session)"]
@@ -61,6 +62,8 @@ flowchart TB
     OPT --> PROPOSAL
     PROPOSAL --> DB
     PROPOSAL --> ALERT
+    ALERT --> NARRATIVE
+    NARRATIVE --> INGEST
     ALERT --> NOTIFY
     NOTIFY -->|your reply| APPROVAL
     APPROVAL --> DB

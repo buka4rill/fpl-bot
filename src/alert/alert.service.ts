@@ -4,6 +4,7 @@ import { Player, PlayerSnapshot, Proposal } from '../common/types/domain.types';
 import { Position } from '../common/enums/position.enum';
 import { FplChip } from '../common/enums/chip.enum';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
+import { NarrativeService } from '../narrative/narrative.service';
 import type { ChipCandidate } from '../optimization/chip-evaluator.service';
 import type { DivergenceResult } from '../results/gameweek-scoring.util';
 
@@ -23,19 +24,39 @@ const CHIP_LABELS: Record<FplChip, string> = {
 
 @Injectable()
 export class AlertService {
-  constructor(private readonly telegram: TelegramAdapter) {}
+  constructor(
+    private readonly telegram: TelegramAdapter,
+    private readonly narrativeService: NarrativeService,
+  ) {}
 
-  // `players`/`snapshots` are passed in rather than fetched here —
-  // AlertModule only renders and sends, it doesn't depend on IngestionModule
-  // (per ARCHITECTURE.md §2's PROPOSAL --> ALERT edge). Whoever generates
-  // the proposal already has both from PredictionService/IngestionService.
+  // `players`/`snapshots` are passed in rather than fetched here — every
+  // sendProposal call site already has both from PredictionService/
+  // IngestionService, and passing them in avoids AlertModule depending on
+  // IngestionModule directly (ARCHITECTURE.md §2's PROPOSAL --> ALERT edge).
+  // NarrativeModule (issue #8) is a deliberate, narrower exception to that:
+  // it depends on IngestionModule itself (for per-player recent-form xG/xA),
+  // but AlertService only ever calls its one best-effort method — see
+  // NarrativeModule's own doc comment. `buildRationale` never throws, so no
+  // try/catch is needed here; a narrative failure just means no rationale
+  // line, never a missing or delayed alert.
   async sendProposal(
     proposal: Proposal,
     players: Player[],
     snapshots: PlayerSnapshot[],
     candidates?: ChipCandidate[],
   ): Promise<void> {
-    const text = this.renderMessage(proposal, players, snapshots, candidates);
+    const rationale = await this.narrativeService.buildRationale(
+      proposal,
+      players,
+      snapshots,
+    );
+    const text = this.renderMessage(
+      proposal,
+      players,
+      snapshots,
+      candidates,
+      rationale,
+    );
     await this.telegram.sendProposalAlert(
       text,
       proposal.id,
@@ -183,6 +204,7 @@ export class AlertService {
     players: Player[],
     snapshots: PlayerSnapshot[],
     candidates?: ChipCandidate[],
+    rationale?: string,
   ): string {
     const playerById = new Map(players.map((p) => [p.id, p]));
     const priceById = new Map(snapshots.map((s) => [s.playerId, s.price]));
@@ -249,6 +271,30 @@ export class AlertService {
           ? `💸 Hit: -${proposal.hitCost} pts`
           : '✅ Hit: 0 pts (within free transfers)',
       );
+    }
+
+    // Best-effort, additive — supplements the terse structural lines above
+    // rather than replacing them (issue #8: keeps the already-validated
+    // format intact even when the LLM call fails or isn't configured).
+    // NarrativeService's system prompt asks for one line per transfer on a
+    // bulk proposal (so nothing gets silently dropped) but flowing prose
+    // for a single transfer — rendered as bullets in the former case,
+    // inline in the latter, rather than dumping a multi-line response
+    // after one bare "Rationale:" label either way.
+    if (rationale) {
+      const rationaleLines = rationale
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (rationaleLines.length > 1) {
+        lines.push(
+          '',
+          '💡 Rationale:',
+          ...rationaleLines.map((line) => `• ${line}`),
+        );
+      } else {
+        lines.push('', `💡 Rationale: ${rationaleLines[0] ?? rationale}`);
+      }
     }
 
     const bench = [proposal.benchGoalkeeperId, ...proposal.benchOutfieldIds]

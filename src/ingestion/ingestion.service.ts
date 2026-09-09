@@ -57,9 +57,12 @@ export class IngestionService {
     return this.fplPublicClient.elementSummary(playerId);
   }
 
-  // Rolling xG/xA over a player's last `matchWindow` fixtures — built for
-  // issue #8 (Telegram narrative layer), which needs a "last N matches" form
-  // claim that PlayerSnapshot.xg/xa (season-cumulative) can't support. One
+  // Rolling xG/xA/defensive-contribution over a player's last `matchWindow`
+  // fixtures — built for issue #8 (Telegram narrative layer), which needs a
+  // "last N matches" form claim that PlayerSnapshot.xg/xa/defensiveContribution
+  // (all season-cumulative) can't support. defensiveContributionPer90 exists
+  // alongside xg/xaPer90 specifically so a defender's rationale has a real
+  // signal to reach for — defenders rarely register meaningful xG/xA. One
   // call per player, so this is meant to be called for the handful of
   // players an alert is actually about (a transfer pair, a captain), not
   // the whole player pool. Sorted by round defensively — live captures have
@@ -83,6 +86,10 @@ export class IngestionService {
       (sum, m) => sum + Number(m.expected_assists),
       0,
     );
+    const dcTotal = recent.reduce(
+      (sum, m) => sum + m.defensive_contribution,
+      0,
+    );
     const per90Factor = minutesConsidered > 0 ? 90 / minutesConsidered : 0;
 
     return {
@@ -91,6 +98,7 @@ export class IngestionService {
       minutesConsidered,
       xgPer90: xgTotal * per90Factor,
       xaPer90: xaTotal * per90Factor,
+      defensiveContributionPer90: dcTotal * per90Factor,
     };
   }
 

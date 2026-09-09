@@ -273,6 +273,7 @@ describe('IngestionService', () => {
           minutes: 90,
           expected_goals: '0.23',
           expected_assists: '0.10',
+          defensive_contribution: 4,
         },
       ],
     };
@@ -290,6 +291,7 @@ describe('IngestionService', () => {
       minutes: number,
       xg: string,
       xa: string,
+      dc = 0,
     ) => ({
       element: 1,
       fixture: round,
@@ -301,6 +303,7 @@ describe('IngestionService', () => {
       minutes,
       expected_goals: xg,
       expected_assists: xa,
+      defensive_contribution: dc,
     });
 
     it('computes per-90 xG/xA over the last matchWindow fixtures only', async () => {
@@ -324,6 +327,28 @@ describe('IngestionService', () => {
       expect(result.xgPer90).toBeCloseTo(0.3, 5);
       // (0.20 + 0.10) / 135 * 90
       expect(result.xaPer90).toBeCloseTo(0.2, 5);
+    });
+
+    it('computes per-90 defensive contribution over the last matchWindow fixtures only, for a defender-shaped sample', async () => {
+      // Round 1 is outside a 2-match window and must not affect the result.
+      // xG/xA are near-zero throughout, as they realistically are for a
+      // defender — defensiveContributionPer90 is the signal that matters.
+      const raw: ElementSummaryResponse = {
+        fixtures: [],
+        history: [
+          historyEntry(1, 90, '0.00', '0.00', 20),
+          historyEntry(2, 90, '0.00', '0.00', 9),
+          historyEntry(3, 90, '0.01', '0.00', 11),
+        ],
+      };
+      fplPublicClient.elementSummary.mockResolvedValue(raw);
+
+      const result = await service.getRecentForm(1, 2);
+
+      expect(result.matchesConsidered).toBe(2);
+      expect(result.minutesConsidered).toBe(180);
+      // (9 + 11) / 180 * 90
+      expect(result.defensiveContributionPer90).toBeCloseTo(10, 5);
     });
 
     it('sorts by round before slicing, regardless of API ordering', async () => {
@@ -354,6 +379,7 @@ describe('IngestionService', () => {
       expect(result.minutesConsidered).toBe(0);
       expect(result.xgPer90).toBe(0);
       expect(result.xaPer90).toBe(0);
+      expect(result.defensiveContributionPer90).toBe(0);
     });
 
     it('handles fewer history entries than the requested window', async () => {

@@ -40,6 +40,7 @@ file is the short version for whichever session picks this repo up next.
 | Module | Status |
 |---|---|
 | `ingestion` | implemented — bootstrap-static, fixtures, element-summary, live-gameweek, current-squad, rolling recent-form xG/xA (2026-09-09, see below — prerequisite for issue #8) |
+| `narrative` | implemented (2026-09-09), not yet verified live — LLM "Tactical Analyst" rationale appended to proposal alerts (issue #8), see below |
 | `trends` | scaffolded — curated source whitelist, not consumed yet |
 | `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder. Now also models FPL's defensive-contribution rule (2026-09-08) — see "Defensive-contribution scoring" below |
 | `optimization` | implemented — squad optimizer (ILP) + chip evaluator, the latter a real same-week multi-strategy comparison as of 2026-09-08 (was a stub before) — see "Open question: single-strategy optimizer..." below. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
@@ -1261,6 +1262,124 @@ layer, not yet built, is the first real consumer. Covered by new specs in
 `ingestion.service.spec.ts`: the matchWindow-slicing behavior, sorting by
 round regardless of API ordering, the zero-minutes divide-by-zero guard,
 and a window request larger than the available history.
+
+## LLM Tactical Analyst narrative layer (2026-09-09, implemented — not yet verified live)
+
+[Issue #8](https://github.com/buka4rill/fpl-bot/issues/8), built on top of
+the rolling recent-form work above. Every `AlertService.sendProposal` call
+now also asks a new `NarrativeService` for a short, LLM-generated
+rationale, appended as a `💡 Rationale:` line under the existing terse
+structural message — **additive, never a replacement** (a deliberate
+choice, confirmed with the owner before building this: the existing
+emoji-led format was already validated live and shouldn't regress).
+
+**New `NarrativeModule`** (`src/narrative/`):
+- `AnthropicClient` — thin wrapper around `@anthropic-ai/sdk`
+  (`claude-haiku-4-5` by default, `NARRATIVE_MODEL` overridable).
+  Chosen over the OpenAI SDK an earlier design discussion had floated,
+  per this app's own default; Haiku specifically since this is a short
+  structured-facts-to-prose task, not something needing a frontier model's
+  reasoning depth. Returns `undefined` (never throws) when
+  `ANTHROPIC_API_KEY` is unset — the feature is simply off, not
+  misconfigured, matching every other optional feature's degrade-gracefully
+  pattern in this app.
+- `NarrativeService.buildRationale(proposal, players, snapshots)` —
+  identifies the players actually relevant to the proposal (transfer
+  out/in pairs + captain), fetches each one's rolling recent-form via
+  `IngestionService.getRecentForm` (new dependency: `NarrativeModule -->
+  IngestionModule`), and assembles a **plain-JSON facts payload** (fixture
+  difficulty, ownership, recent xG/xA, expected gain, hit cost, chip) that
+  is the *only* thing sent to the LLM. The system prompt explicitly
+  instructs it to narrate only those numbers and never invent a statistic,
+  player, or fixture — the grounding constraint this feature's own design
+  discussion flagged as the main risk (a specific-sounding number is easy
+  to hallucinate on top of a real but coarser field). Wrapped in its own
+  try/catch — any failure anywhere in this chain (missing key, a bad
+  `getRecentForm` call, the LLM erroring) is logged and returns
+  `undefined`, never thrown, so a narrative problem can never block or
+  delay the underlying proposal alert.
+
+**Deliberate architecture exception, documented rather than silently
+done**: `AlertModule`'s original design (see its own doc comment, now
+updated) kept it dependency-free from `IngestionModule` — players/
+snapshots were always passed in as data by the caller instead.
+`NarrativeModule` breaks that specifically (`ALERT --> NARRATIVE -->
+INGEST`, added to ARCHITECTURE.md §2's diagram) rather than pushing the
+narrative call out to all five of `sendProposal`'s existing call sites
+(`DeadlineWatcherService`, `ProposalController` ×4, `TelegramCommandsService`)
+— centralizing it in `AlertService` avoids duplicating "which players need
+recent form" logic five times over. `AlertService.sendProposal` itself
+still only ever calls `NarrativeService`'s one best-effort method, so the
+boundary violation is narrow and contained, not a general free-for-all.
+
+**Not yet verified live** — this project's usual bar before calling
+something done — because it needs a real `ANTHROPIC_API_KEY`, which isn't
+available in this environment. Config plumbing (`configuration.ts`,
+`.env.example`) is in place; whoever has a key should set
+`ANTHROPIC_API_KEY` (and optionally `NARRATIVE_MODEL`) and trigger a real
+proposal (`/propose` or `POST /proposal/generate`) to confirm the rationale
+actually appears and reads sensibly against real data. All unit tests
+pass and `tsc`/lint are clean, but that only proves the wiring is correct,
+not that the LLM's actual output is good. Model ID corrected same day to
+`claude-haiku-4-5` (no date suffix) — an earlier draft used a dated ID
+that isn't the real current one.
+
+**Two real gaps found and fixed the same day, before any live use —
+raised by the owner reasoning through specific proposal shapes rather than
+from a live incident:**
+
+1. **Defenders had no real signal to reach for.** The facts payload only
+   ever carried `fixtureDifficulty`/`ownershipPct`/xG+xA-based
+   `recentForm` — but defenders rarely register meaningful xG/xA, so a
+   defender transfer would hand the LLM two near-zero attacking numbers
+   and nothing else, when `HeuristicStrategy`'s own defensive-contribution
+   rule (2 pts at the CBIT/CBIRT threshold) is the actual reason a
+   defender gets proposed. Fixed by widening the rolling-form work above:
+   `RawElementSummaryHistory` gained `defensive_contribution` (a genuine
+   per-match JSON number, confirmed live in the same earlier capture that
+   found per-match xG/xA), `PlayerRecentForm` gained
+   `defensiveContributionPer90`, and `IngestionService.getRecentForm`
+   computes it the same way as xgPer90/xaPer90 — same rolling window, same
+   per-90 scaling. `NarrativeService`'s facts payload and system prompt
+   both updated: the prompt now explicitly tells the model defenders/
+   defensive midfielders should usually be judged on defensive
+   contribution rather than xG/xA, attackers the reverse.
+2. **One player's failed fetch used to drop the entire rationale.**
+   `buildRationale` originally used `Promise.all` over every relevant
+   player's `getRecentForm` call — a bulk transfer proposal (the
+   documented 9-transfer GW4 batch touches ~18 players + captain) has a
+   lot of surface area for one live FPL call to fail, and a single
+   rejection silently killed the whole narrative, not just that one
+   player's form data. Fixed with `Promise.allSettled`: a failed fetch
+   now just means that one player's `recentForm` is `null` in the facts
+   payload (the system prompt already tells the model not to treat `null`
+   as zero form) — every other player's data, and the LLM call itself,
+   proceed normally. This also changes behavior for the "IngestionService
+   completely down" case: previously the whole rationale was skipped;
+   now the LLM is still called with `recentForm: null` for everyone,
+   since fixture difficulty/ownership/chip are still real, useful facts
+   even with zero recent-form data — see the regression test in
+   `narrative.service.spec.ts` (`'still calls the LLM with null
+   recentForm for every player when IngestionService fails entirely'`).
+
+**Bulk-transfer prompt scaling — fixed 2026-09-09, same day as the
+decision to defer activation above.** The flat "2-4 sentences" instruction
+was the root cause: with a fixed sentence budget regardless of transfer
+count, the model had to silently choose which transfers to mention and
+drop the rest — confirmed by hand-tracing a 3-transfer example (Wilson ➔
+Isak was the one silently dropped). Fixed by making the *format* scale
+with transfer count instead of a fixed sentence cap: `SYSTEM_PROMPT` now
+tells the model to give a reason for **every** transfer — flowing 2-4
+sentence prose when there's exactly one, but one short line per transfer
+plus a closing captain line when there are two or more (explicitly named
+as the reason: "this is what keeps every transfer visible instead of
+forcing you to pick which ones matter"). `AlertService.renderMessage`
+updated to match: a single-line response still renders inline
+(`💡 Rationale: ...`), but a multi-line response (the bulk-transfer case)
+renders as a `💡 Rationale:` header followed by one `•` bullet per line,
+rather than dumping raw newlines after one bare label. See the new test
+in `alert.service.spec.ts` (`'renders a multi-line rationale as bullets,
+one per line, for a bulk transfer'`).
 
 ## Deploy (Fly.io) + CI/CD (2026-09-08 — live)
 

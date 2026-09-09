@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AlertService } from './alert.service';
 import { TelegramAdapter } from './adapters/telegram.adapter';
+import { NarrativeService } from '../narrative/narrative.service';
 import { Player, PlayerSnapshot, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
@@ -14,6 +15,7 @@ describe('AlertService', () => {
     sendMessage: jest.Mock;
     sendAppliedCheckIn: jest.Mock;
   };
+  let narrativeService: { buildRationale: jest.Mock };
 
   const players: Player[] = [
     {
@@ -92,11 +94,17 @@ describe('AlertService', () => {
       sendMessage: jest.fn(),
       sendAppliedCheckIn: jest.fn(),
     };
+    // Default: no rationale, so every pre-existing test's exact-text
+    // assertions keep passing unchanged — the narrative line is additive.
+    narrativeService = {
+      buildRationale: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AlertService,
         { provide: TelegramAdapter, useValue: telegram },
+        { provide: NarrativeService, useValue: narrativeService },
       ],
     }).compile();
 
@@ -120,6 +128,50 @@ describe('AlertService', () => {
     expect(text).toContain('📊 Predicted Points: 42.5 xP');
     expect(text).toContain('✅ No transfers — squad unchanged');
     expect(text).not.toContain('💸 Hit');
+  });
+
+  it('appends the rationale line when NarrativeService returns one', async () => {
+    narrativeService.buildRationale.mockResolvedValue(
+      "Palmer's underlying numbers clearly outperform Saka's this week.",
+    );
+
+    await service.sendProposal(proposal, players, snapshots);
+
+    const [text] = telegram.sendProposalAlert.mock.calls[0] as [string];
+    expect(text).toContain(
+      "💡 Rationale: Palmer's underlying numbers clearly outperform Saka's this week.",
+    );
+  });
+
+  it('renders a multi-line rationale as bullets, one per line, for a bulk transfer', async () => {
+    narrativeService.buildRationale.mockResolvedValue(
+      'Saka ➔ Palmer: better underlying numbers this week.\nWilson ➔ Isak: easier fixture and stronger recent form.\nHaaland keeps the captaincy given his own great fixture.',
+    );
+
+    await service.sendProposal(proposal, players, snapshots);
+
+    const [text] = telegram.sendProposalAlert.mock.calls[0] as [string];
+    expect(text).toContain('💡 Rationale:\n');
+    expect(text).toContain(
+      '• Saka ➔ Palmer: better underlying numbers this week.',
+    );
+    expect(text).toContain(
+      '• Wilson ➔ Isak: easier fixture and stronger recent form.',
+    );
+    expect(text).toContain(
+      '• Haaland keeps the captaincy given his own great fixture.',
+    );
+    // Single-line inline format must not also appear.
+    expect(text).not.toContain('💡 Rationale: Saka');
+  });
+
+  it('omits the rationale line entirely when NarrativeService has nothing to add', async () => {
+    narrativeService.buildRationale.mockResolvedValue(undefined);
+
+    await service.sendProposal(proposal, players, snapshots);
+
+    const [text] = telegram.sendProposalAlert.mock.calls[0] as [string];
+    expect(text).not.toContain('💡 Rationale');
   });
 
   it('tells the adapter there is no chip-free alternative by default', async () => {

@@ -101,6 +101,12 @@ export interface RawElementSummaryHistory {
   // each carrying that single match's xG/xA rather than a running total.
   expected_goals: string;
   expected_assists: string;
+  // Per-match CBIT/CBIRT count — a genuine JSON number, same as
+  // RawElement.defensive_contribution above, just per-match rather than
+  // season-cumulative. The defender-relevant counterpart to xG/xA above:
+  // without this, a rolling-form view of a defender is nearly always two
+  // near-zero attacking numbers, since defenders rarely register xG/xA.
+  defensive_contribution: number;
 }
 
 export interface ElementSummaryResponse {
