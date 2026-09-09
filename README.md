@@ -308,6 +308,36 @@ SELECT season, "gameweekId", status, "createdAt" FROM proposals ORDER BY "create
 
 `\q` to exit.
 
+**Connecting a GUI client (DBeaver, TablePlus, etc.) to the live DB:**
+`fly postgres connect` is psql-only — a GUI needs a persistent local
+TCP tunnel instead:
+
+```bash
+flyctl proxy 5432:5432 -a fpl-bot-buka4rill-db
+```
+
+Leave that running, then connect with:
+
+| Field | Value |
+|---|---|
+| Host | `localhost` |
+| Port | `5432` |
+| Database | `fpl_bot_buka4rill` |
+| Username / Password | from `DATABASE_URL` — get it with `flyctl ssh console -a fpl-bot-buka4rill -C "printenv DATABASE_URL"` |
+| SSL mode | `disable` |
+
+**Don't run this proxy inside Docker** — it was tried (wrapping
+`flyctl proxy` in a container, so a Docker command replaces the bare
+terminal one) and confirmed broken live: the container authenticated and
+reported "Proxying..." successfully, but every actual connection through
+it died instantly with `EOFException`/`server closed the connection
+unexpectedly`, identically regardless of SSL mode. Isolated by running
+the exact same proxy bare on the host instead, which worked immediately —
+`flyctl proxy` runs its own userspace WireGuard tunnel, and nesting that
+inside Docker Desktop's own network/NAT layer (particularly on Windows)
+doesn't forward traffic correctly. Not worth chasing further for a
+convenience wrapper; run it on the host.
+
 **Manual redeploy** (normally automatic after CI passes on `main` — see
 [CI / CD](#ci--cd) above):
 
