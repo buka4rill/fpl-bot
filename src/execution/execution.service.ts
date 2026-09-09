@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -53,6 +53,8 @@ const sleep = (ms: number): Promise<void> =>
 // actually runs against a real transfer or chip.
 @Injectable()
 export class ExecutionService {
+  private readonly logger = new Logger(ExecutionService.name);
+
   constructor(
     private readonly fplAuthClient: FplAuthClient,
     private readonly config: ConfigService,
@@ -129,6 +131,18 @@ export class ExecutionService {
     // that's what's checked here for every chip, not just the ones that
     // route through setLineup's own chip param.
     let chipConfirmed = true;
+    // Captured regardless of outcome (2026-09-09) — persisted into the
+    // execution log below so a false negative can actually be diagnosed
+    // afterward instead of guessing. The first three real occurrences of
+    // this false-negative failure mode (2026-09-08, then twice more
+    // 2026-09-09 even after widening the retry budget once already) left
+    // zero trail beyond "it failed, then a later unrelated check showed it
+    // had actually landed" — nothing recorded what each retry actually saw.
+    const chipConfirmationAttempts: Array<{
+      attempt: number;
+      confirmed: boolean;
+      chips: FplChipStatus[];
+    }> = [];
     if (success && proposal.chip !== undefined) {
       const declaredChipName: string = proposal.chip;
       chipConfirmed = this.isChipPlayed(
@@ -136,14 +150,22 @@ export class ExecutionService {
         declaredChipName,
         teamId,
       );
+      chipConfirmationAttempts.push({
+        attempt: 0,
+        confirmed: chipConfirmed,
+        chips: (lineupResult as FplMyTeam).chips,
+      });
+      this.logger.log(
+        `Chip confirmation for proposal ${proposal.id} ("${declaredChipName}"), initial setLineup response: confirmed=${chipConfirmed}`,
+      );
       const retries = Number(
-        this.config.get<number>('execution.chipConfirmationRetries') ?? 8,
+        this.config.get<number>('execution.chipConfirmationRetries') ?? 15,
       );
       const retryDelayMs = Number(
         this.config.get<number>('execution.chipConfirmationRetryDelayMs') ??
-          5000,
+          8000,
       );
-      for (let attempt = 0; !chipConfirmed && attempt < retries; attempt++) {
+      for (let attempt = 1; !chipConfirmed && attempt <= retries; attempt++) {
         await sleep(retryDelayMs);
         const recheck = await this.fplAuthClient.getMyTeam(teamId);
         chipConfirmed = this.isChipPlayed(
@@ -151,8 +173,19 @@ export class ExecutionService {
           declaredChipName,
           teamId,
         );
+        chipConfirmationAttempts.push({
+          attempt,
+          confirmed: chipConfirmed,
+          chips: recheck.chips,
+        });
+        this.logger.log(
+          `Chip confirmation for proposal ${proposal.id} ("${declaredChipName}"), retry ${attempt}/${retries}: confirmed=${chipConfirmed}`,
+        );
       }
       if (!chipConfirmed) {
+        this.logger.warn(
+          `Chip confirmation for proposal ${proposal.id} ("${declaredChipName}") never confirmed after ${retries} retries (${(retries * retryDelayMs) / 1000}s) — reporting execution as failed. Last chips seen: ${JSON.stringify(chipConfirmationAttempts.at(-1)?.chips)}`,
+        );
         success = false;
       }
     }
@@ -161,7 +194,11 @@ export class ExecutionService {
       this.executionLogRepository.create({
         proposalId: proposal.id,
         requestPayload: { transfers: proposal.transfers, picks },
-        responsePayload: { transfersResult, lineupResult },
+        responsePayload: {
+          transfersResult,
+          lineupResult,
+          chipConfirmationAttempts,
+        },
         appliedAt: new Date().toISOString(),
         success,
       }),
@@ -173,7 +210,7 @@ export class ExecutionService {
       // than a generic failure message (CLAUDE.md: fail loudly, never
       // silently, and never understate what actually happened).
       const message = !chipConfirmed
-        ? `Transfers/lineup were applied for proposal ${proposal.id}, but FPL doesn't show the "${proposal.chip}" chip as actually played afterward — it may be unavailable for this account right now (check /status). See execution log ${log.id}.`
+        ? `Transfers/lineup were applied for proposal ${proposal.id}, but FPL still hasn't confirmed the "${proposal.chip}" chip as played after ${chipConfirmationAttempts.length - 1} retries — this has turned out to be a false alarm before (FPL's own confirmation can lag longer than this check waits), so check /status yourself before assuming it genuinely failed. See execution log ${log.id}.`
         : usesTransferEndpoint
           ? `Transfers were applied for proposal ${proposal.id}, but setting the final lineup/captain failed — check the FPL app directly. See execution log ${log.id}.`
           : `Execution failed for proposal ${proposal.id} — see execution log ${log.id}.`;

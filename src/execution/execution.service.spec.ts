@@ -259,7 +259,7 @@ describe('ExecutionService', () => {
       baseProposal({ chip: FplChip.FREE_HIT }),
     );
     const assertion = expect(applyPromise).rejects.toThrow(
-      'doesn\'t show the "freehit" chip as actually played',
+      'still hasn\'t confirmed the "freehit" chip as played',
     );
     await jest.runAllTimersAsync();
     await assertion;
@@ -443,6 +443,7 @@ describe('ExecutionService', () => {
         responsePayload: {
           transfersResult: {},
           lineupResult: { error: 'Error: FPL API 500' },
+          chipConfirmationAttempts: [], // never reached — setLineup itself failed
         },
       }),
     );

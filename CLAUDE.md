@@ -504,6 +504,33 @@ trade-off. See the regression test in `execution.service.spec.ts`:
 proves a chip confirming only on the 5th check (beyond what the old
 3-retry budget would have caught) still reports success.
 
+**Same false negative recurred a third time, same day, even at the 40s
+budget — widened again, and (this time) actually instrumented instead of
+guessing at another number.** The owner cancelled Bench Boost via the FPL
+app and re-declared it through the bot; independently confirmed via
+`/team-state/report` that it genuinely landed (`played_by_entry: [4]`), yet
+execution still reported failure. Three real occurrences in two days, each
+self-resolving to "it actually worked" when checked afterward, and *zero*
+diagnostic trail from any of them — `ExecutionService` had no logger at
+all, and the retry loop's own `getMyTeam` rechecks were never persisted
+anywhere, only the original `setLineup` response. No way to tell from any
+of the first three incidents whether this was "still just slow" or a real,
+different bug.
+
+Fixed on two fronts at once: (1) budget widened again to 15 retries × 8s =
+120s (`chipConfirmationRetries`/`chipConfirmationRetryDelayMs` defaults in
+`configuration.ts`); (2) actual observability added — every attempt (the
+initial `setLineup`-response check plus every retry) is now logged via
+`ExecutionService`'s new `Logger` (`fly logs` will show each attempt's
+confirmed/not-confirmed outcome live) and persisted as
+`chipConfirmationAttempts` (`{attempt, confirmed, chips}[]`) on the
+execution log's own `responsePayload`, so a 4th occurrence — if the wider
+budget still isn't enough — is actually diagnosable from stored data
+instead of more guessing. Also softened the Telegram failure message
+itself: it now says outright that this specific failure mode has been a
+false alarm before and tells the owner to check `/status` before assuming
+the worst, rather than flatly asserting the chip is unavailable.
+
 ## Open question: single-strategy optimizer vs. weighing strategies against each other (raised 2026-09-08, not decided)
 
 Even with the transfer-hit policy fix above, `SquadOptimizerService` still

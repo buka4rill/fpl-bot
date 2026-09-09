@@ -27,14 +27,16 @@ export interface AppConfig {
     // How long to keep re-checking FPL's my-team endpoint for a declared
     // chip to show as actually played before giving up and reporting
     // execution as failed (ExecutionService.apply). FPL's backend doesn't
-    // always finish propagating a chip-active state immediately — the
-    // default budget was 3 retries * 2s = 6s originally, but that proved
-    // insufficient live twice (2026-09-09: two real Bench Boost plays each
-    // took longer than 6s to become visible, producing a false "execution
-    // FAILED" alert for a chip that had actually landed). Widened
-    // substantially since the cost of waiting longer before reporting is
-    // low (the deadline is always hours away) while a false negative causes
-    // real confusion and an unnecessary "make this change manually" prompt.
+    // always finish propagating a chip-active state immediately. Widened
+    // twice live on 2026-09-09 (6s, then 40s) and still hit a third false
+    // "execution FAILED" for a chip that had actually landed — each time
+    // confirmed genuinely active via a later, unrelated /status check. Now
+    // 15 retries * 8s = 120s, plus (same day) each attempt is logged and
+    // persisted on the execution log's `chipConfirmationAttempts`, so if
+    // this recurs there's finally real data instead of guessing at the
+    // number again. Widening costs little either way — the deadline is
+    // always hours away — while a false negative causes real confusion and
+    // an unnecessary "make this change manually" prompt.
     chipConfirmationRetries: number;
     chipConfirmationRetryDelayMs: number;
   };
@@ -74,10 +76,10 @@ export default (): AppConfig => ({
   },
   execution: {
     chipConfirmationRetries: Number(
-      process.env.EXECUTION_CHIP_CONFIRMATION_RETRIES ?? 8,
+      process.env.EXECUTION_CHIP_CONFIRMATION_RETRIES ?? 15,
     ),
     chipConfirmationRetryDelayMs: Number(
-      process.env.EXECUTION_CHIP_CONFIRMATION_RETRY_DELAY_MS ?? 5000,
+      process.env.EXECUTION_CHIP_CONFIRMATION_RETRY_DELAY_MS ?? 8000,
     ),
   },
   database: {
