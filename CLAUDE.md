@@ -39,7 +39,7 @@ file is the short version for whichever session picks this repo up next.
 
 | Module | Status |
 |---|---|
-| `ingestion` | implemented — bootstrap-static, fixtures, element-summary, live-gameweek, current-squad |
+| `ingestion` | implemented — bootstrap-static, fixtures, element-summary, live-gameweek, current-squad, rolling recent-form xG/xA (2026-09-09, see below — prerequisite for issue #8) |
 | `trends` | scaffolded — curated source whitelist, not consumed yet |
 | `prediction` | implemented (v1) — `HeuristicStrategy`; `TrainedModelStrategy` (v2) still a placeholder. Now also models FPL's defensive-contribution rule (2026-09-08) — see "Defensive-contribution scoring" below |
 | `optimization` | implemented — squad optimizer (ILP) + chip evaluator, the latter a real same-week multi-strategy comparison as of 2026-09-08 (was a stub before) — see "Open question: single-strategy optimizer..." below. Transfer-hit recommendations are deliberately conservative (2026-09-08): capped at `OPTIMIZER_MAX_HITS_PER_WEEK` hits/week (default 1) and gated by a risk-adjusted internal threshold (`OPTIMIZER_HIT_RISK_PREMIUM` on top of the real 4-pt cost, default 4, so effective threshold 8) — see "Transfer-hit policy" below |
@@ -1215,6 +1215,52 @@ eventual backtesting can exclude a diverged gameweek without recomputing
 the comparison — the SQL in "Step 5's data checkpoint" above should filter
 `divergedFromPlan IS NOT TRUE` alongside `source = 'AUTO'` once this has
 had time to actually flag something live.
+
+## Rolling recent-form xG/xA (2026-09-09, implemented) — prerequisite for issue #8
+
+First real step on [issue #8](https://github.com/buka4rill/fpl-bot/issues/8)
+(the LLM "Tactical Analyst" narrative layer for Telegram alerts). That
+feature's own design discussion flagged a gap before any LLM work could
+start: a claim like "Palmer's xG+xA per 90 over his last 4 matches" can't
+be backed by `PlayerSnapshot.xg`/`xa` — those are season-cumulative
+(`RawElement.expected_goals`/`expected_assists` on `bootstrap-static`),
+not a recent-form rate, and `HeuristicStrategy` itself is deliberately
+untouched here — this is a new signal for the future narrative layer only,
+not a scoring-model change.
+
+Verified live before writing any code (this project's usual practice
+rather than assuming a shape): `element-summary/{id}/`'s `history` array —
+already fetched by `IngestionService.getElementSummary` but left
+unnormalized — turns out to carry `expected_goals`/`expected_assists` too,
+but **per match**, one entry per fixture played, unlike the
+season-cumulative field of the same name on `bootstrap-static`. Confirmed
+against a real player (Saka, id 12): 3 history entries so far this season,
+each with its own `expected_goals`/`expected_assists`/`minutes`/`round`.
+
+Added `IngestionService.getRecentForm(playerId, matchWindow = 4)` —
+normalizes into the new `PlayerRecentForm` domain type
+(`{ playerId, matchesConsidered, minutesConsidered, xgPer90, xaPer90 }`).
+Sorts `history` by `round` before slicing the last `matchWindow` entries
+(defensive — live captures have returned it in ascending order already,
+but nothing in the contract guarantees that), sums xG/xA and minutes over
+that window, and derives the per-90 rate the same way
+`HeuristicStrategy.underlyingStatsBonus` already does for the
+season-cumulative case. Returns `matchesConsidered`/`minutesConsidered`
+alongside the rate (not just the rate) so a future consumer can caveat a
+thin sample — e.g. a player with one match played — rather than presenting
+it with the same confidence as a full window; zero minutes returns `0`
+for both rates rather than dividing by zero.
+
+Deliberately one call per player, not a bulk endpoint — `RawElementSummaryHistory`
+(`fpl-api.types.ts`) was widened to type the two new fields, with a comment
+distinguishing them from `RawElement`'s same-named-but-cumulative fields to
+head off exactly the confusion this feature exists to avoid. Meant to be
+called for the handful of players an alert is actually about (a transfer
+pair, a captain), not the whole ~700-player pool — issue #8's own narrative
+layer, not yet built, is the first real consumer. Covered by new specs in
+`ingestion.service.spec.ts`: the matchWindow-slicing behavior, sorting by
+round regardless of API ordering, the zero-minutes divide-by-zero guard,
+and a window request larger than the available history.
 
 ## Deploy (Fly.io) + CI/CD (2026-09-08 — live)
 

@@ -200,6 +200,22 @@ export interface GameweekOutcome {
   startingXI: number[];
 }
 
+// Recent-form xG/xA for one player, over their last `matchesConsidered`
+// fixtures — distinct from PlayerSnapshot.xg/xa, which are season-cumulative.
+// Built for issue #8 (Telegram narrative layer): a claim like "0.88 xG+xA
+// per 90 over his last 4 matches" needs this rolling window, not the
+// season-to-date rate. `matchesConsidered`/`minutesConsidered` are surfaced
+// (not just the rate) so a consumer can caveat a small sample — e.g. a
+// player with only 1 match played this season — rather than presenting a
+// thin sample with the same confidence as a full one.
+export interface PlayerRecentForm {
+  playerId: number;
+  matchesConsidered: number;
+  minutesConsidered: number;
+  xgPer90: number;
+  xaPer90: number;
+}
+
 export interface Approval {
   proposalId: string;
   decidedBy: string;

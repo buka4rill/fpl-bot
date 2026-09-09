@@ -95,6 +95,12 @@ export interface RawElementSummaryHistory {
   kickoff_time: string;
   total_points: number;
   minutes: number;
+  // Per-match, numeric strings — unlike RawElement.expected_goals/
+  // expected_assists above, which are season-cumulative. Confirmed live
+  // via a real element-summary call: one history entry per fixture played,
+  // each carrying that single match's xG/xA rather than a running total.
+  expected_goals: string;
+  expected_assists: string;
 }
 
 export interface ElementSummaryResponse {

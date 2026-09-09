@@ -8,6 +8,7 @@ import {
   Gameweek,
   Player,
   PlayerGameweekStats,
+  PlayerRecentForm,
   PlayerSnapshot,
   SquadRules,
   Team,
@@ -54,6 +55,43 @@ export class IngestionService {
   // ends up consuming form/minutes-risk, which isn't decided.
   getElementSummary(playerId: number): Promise<ElementSummaryResponse> {
     return this.fplPublicClient.elementSummary(playerId);
+  }
+
+  // Rolling xG/xA over a player's last `matchWindow` fixtures — built for
+  // issue #8 (Telegram narrative layer), which needs a "last N matches" form
+  // claim that PlayerSnapshot.xg/xa (season-cumulative) can't support. One
+  // call per player, so this is meant to be called for the handful of
+  // players an alert is actually about (a transfer pair, a captain), not
+  // the whole player pool. Sorted by round defensively — live captures have
+  // so far returned history in ascending order already, but nothing in the
+  // API contract guarantees it.
+  async getRecentForm(
+    playerId: number,
+    matchWindow = 4,
+  ): Promise<PlayerRecentForm> {
+    const raw = await this.fplPublicClient.elementSummary(playerId);
+    const recent = [...raw.history]
+      .sort((a, b) => a.round - b.round)
+      .slice(-matchWindow);
+
+    const minutesConsidered = recent.reduce((sum, m) => sum + m.minutes, 0);
+    const xgTotal = recent.reduce(
+      (sum, m) => sum + Number(m.expected_goals),
+      0,
+    );
+    const xaTotal = recent.reduce(
+      (sum, m) => sum + Number(m.expected_assists),
+      0,
+    );
+    const per90Factor = minutesConsidered > 0 ? 90 / minutesConsidered : 0;
+
+    return {
+      playerId,
+      matchesConsidered: recent.length,
+      minutesConsidered,
+      xgPer90: xgTotal * per90Factor,
+      xaPer90: xaTotal * per90Factor,
+    };
   }
 
   // Actual per-player performance once a gameweek is underway/finished, for

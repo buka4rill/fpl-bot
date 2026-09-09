@@ -271,6 +271,8 @@ describe('IngestionService', () => {
           kickoff_time: '2026-08-21T19:00:00Z',
           total_points: 6,
           minutes: 90,
+          expected_goals: '0.23',
+          expected_assists: '0.10',
         },
       ],
     };
@@ -280,6 +282,92 @@ describe('IngestionService', () => {
 
     expect(fplPublicClient.elementSummary).toHaveBeenCalledWith(1);
     expect(result).toBe(raw);
+  });
+
+  describe('getRecentForm', () => {
+    const historyEntry = (
+      round: number,
+      minutes: number,
+      xg: string,
+      xa: string,
+    ) => ({
+      element: 1,
+      fixture: round,
+      opponent_team: 7,
+      round,
+      was_home: true,
+      kickoff_time: '2026-08-21T19:00:00Z',
+      total_points: 6,
+      minutes,
+      expected_goals: xg,
+      expected_assists: xa,
+    });
+
+    it('computes per-90 xG/xA over the last matchWindow fixtures only', async () => {
+      // Round 1 is outside a 2-match window and must not affect the result.
+      const raw: ElementSummaryResponse = {
+        fixtures: [],
+        history: [
+          historyEntry(1, 90, '5.00', '5.00'),
+          historyEntry(2, 90, '0.30', '0.20'),
+          historyEntry(3, 45, '0.15', '0.10'),
+        ],
+      };
+      fplPublicClient.elementSummary.mockResolvedValue(raw);
+
+      const result = await service.getRecentForm(1, 2);
+
+      expect(fplPublicClient.elementSummary).toHaveBeenCalledWith(1);
+      expect(result.matchesConsidered).toBe(2);
+      expect(result.minutesConsidered).toBe(135);
+      // (0.30 + 0.15) / 135 * 90
+      expect(result.xgPer90).toBeCloseTo(0.3, 5);
+      // (0.20 + 0.10) / 135 * 90
+      expect(result.xaPer90).toBeCloseTo(0.2, 5);
+    });
+
+    it('sorts by round before slicing, regardless of API ordering', async () => {
+      const raw: ElementSummaryResponse = {
+        fixtures: [],
+        history: [
+          historyEntry(2, 90, '0.30', '0.20'),
+          historyEntry(1, 90, '5.00', '5.00'),
+        ],
+      };
+      fplPublicClient.elementSummary.mockResolvedValue(raw);
+
+      const result = await service.getRecentForm(1, 1);
+
+      expect(result.matchesConsidered).toBe(1);
+      expect(result.xgPer90).toBeCloseTo(0.3, 5);
+    });
+
+    it('returns zero rates rather than dividing by zero when no minutes were played', async () => {
+      const raw: ElementSummaryResponse = {
+        fixtures: [],
+        history: [historyEntry(1, 0, '0.00', '0.00')],
+      };
+      fplPublicClient.elementSummary.mockResolvedValue(raw);
+
+      const result = await service.getRecentForm(1, 4);
+
+      expect(result.minutesConsidered).toBe(0);
+      expect(result.xgPer90).toBe(0);
+      expect(result.xaPer90).toBe(0);
+    });
+
+    it('handles fewer history entries than the requested window', async () => {
+      const raw: ElementSummaryResponse = {
+        fixtures: [],
+        history: [historyEntry(1, 90, '0.30', '0.20')],
+      };
+      fplPublicClient.elementSummary.mockResolvedValue(raw);
+
+      const result = await service.getRecentForm(1, 4);
+
+      expect(result.matchesConsidered).toBe(1);
+      expect(result.xgPer90).toBeCloseTo(0.3, 5);
+    });
   });
 
   it('passes live gameweek stats through unchanged', async () => {
