@@ -23,6 +23,21 @@ export interface AppConfig {
     hitRiskPremium: number;
     chipRiskPremium: number;
   };
+  execution: {
+    // How long to keep re-checking FPL's my-team endpoint for a declared
+    // chip to show as actually played before giving up and reporting
+    // execution as failed (ExecutionService.apply). FPL's backend doesn't
+    // always finish propagating a chip-active state immediately — the
+    // default budget was 3 retries * 2s = 6s originally, but that proved
+    // insufficient live twice (2026-09-09: two real Bench Boost plays each
+    // took longer than 6s to become visible, producing a false "execution
+    // FAILED" alert for a chip that had actually landed). Widened
+    // substantially since the cost of waiting longer before reporting is
+    // low (the deadline is always hours away) while a false negative causes
+    // real confusion and an unnecessary "make this change manually" prompt.
+    chipConfirmationRetries: number;
+    chipConfirmationRetryDelayMs: number;
+  };
   database: {
     // Set in production (e.g. `fly postgres attach` injects this) — takes
     // priority over the discrete host/port/name/user/password fields below
@@ -56,6 +71,14 @@ export default (): AppConfig => ({
     maxHitsPerWeek: Number(process.env.OPTIMIZER_MAX_HITS_PER_WEEK ?? 1),
     hitRiskPremium: Number(process.env.OPTIMIZER_HIT_RISK_PREMIUM ?? 4),
     chipRiskPremium: Number(process.env.OPTIMIZER_CHIP_RISK_PREMIUM ?? 8),
+  },
+  execution: {
+    chipConfirmationRetries: Number(
+      process.env.EXECUTION_CHIP_CONFIRMATION_RETRIES ?? 8,
+    ),
+    chipConfirmationRetryDelayMs: Number(
+      process.env.EXECUTION_CHIP_CONFIRMATION_RETRY_DELAY_MS ?? 5000,
+    ),
   },
   database: {
     url: process.env.DATABASE_URL || undefined,

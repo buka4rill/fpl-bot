@@ -20,6 +20,7 @@ describe('ExecutionService', () => {
   };
   let ingestionService: { getBootstrapSnapshot: jest.Mock };
   let executionLogRepository: { create: jest.Mock; save: jest.Mock };
+  let configService: { get: jest.Mock };
 
   const pick = (
     element: number,
@@ -88,7 +89,19 @@ describe('ExecutionService', () => {
         { provide: FplAuthClient, useValue: fplAuthClient },
         {
           provide: ConfigService,
-          useValue: { get: jest.fn().mockReturnValue('6909032') },
+          useValue: (configService = {
+            // Retry count/delay pinned to the pre-2026-09-09 defaults here so
+            // the retry-specific tests below keep their exact call-count
+            // assertions regardless of whatever the real production default
+            // (config/configuration.ts) is tuned to. Overridden per-test
+            // below where a different retry budget matters.
+            get: jest.fn((key: string) => {
+              if (key === 'fpl.teamId') return '6909032';
+              if (key === 'execution.chipConfirmationRetries') return 3;
+              if (key === 'execution.chipConfirmationRetryDelayMs') return 1;
+              return undefined;
+            }),
+          }),
         },
         { provide: IngestionService, useValue: ingestionService },
         {
@@ -307,6 +320,76 @@ describe('ExecutionService', () => {
     expect(log.success).toBe(true);
     // Initial getMyTeam + exactly one retry, not all three.
     expect(fplAuthClient.getMyTeam).toHaveBeenCalledTimes(2);
+
+    jest.useRealTimers();
+  });
+
+  it('confirms success on a retry beyond the old 3-retry budget (regression — 2026-09-09, two real Bench Boost plays this happened to live)', async () => {
+    // The 2026-09-08 fix above only budgeted 3 retries (~6s) — confirmed
+    // live twice on 2026-09-09 that FPL's propagation lag can genuinely
+    // exceed that, producing a false "execution FAILED" for a chip that had
+    // actually landed (the owner independently confirmed via /status and
+    // the FPL app both times). Widening the retry budget only helps if the
+    // code actually keeps retrying past what the old default allowed —
+    // this proves that with a wider budget (6, standing in for the new
+    // default of 8), a chip that only confirms on the 5th check (1 initial
+    // + 4 retries — beyond the old budget's 1 + 3) still reports success.
+    configService.get.mockImplementation((key: string) => {
+      if (key === 'fpl.teamId') return '6909032';
+      if (key === 'execution.chipConfirmationRetries') return 6;
+      if (key === 'execution.chipConfirmationRetryDelayMs') return 1;
+      return undefined;
+    });
+    jest.useFakeTimers();
+    fplAuthClient.setLineup.mockResolvedValue({
+      picks: currentPicks,
+      chips: [
+        {
+          name: 'bboost',
+          status_for_entry: 'unavailable',
+          played_by_entry: [],
+        },
+      ],
+    });
+    const unconfirmed = {
+      picks: currentPicks,
+      picks_last_updated: '',
+      chips: [
+        {
+          name: 'bboost',
+          status_for_entry: 'unavailable',
+          played_by_entry: [],
+        },
+      ],
+      transfers: {},
+    };
+    const confirmed = {
+      picks: currentPicks,
+      picks_last_updated: '',
+      chips: [
+        {
+          name: 'bboost',
+          status_for_entry: 'active',
+          played_by_entry: [6909032],
+        },
+      ],
+      transfers: {},
+    };
+    fplAuthClient.getMyTeam
+      .mockResolvedValueOnce(unconfirmed) // initial call in apply(), building picks
+      .mockResolvedValueOnce(unconfirmed) // retry 1 — still not confirmed (old budget would have stopped after 3 of these)
+      .mockResolvedValueOnce(unconfirmed) // retry 2
+      .mockResolvedValueOnce(unconfirmed) // retry 3 — this is where the old 3-retry budget gave up
+      .mockResolvedValueOnce(confirmed); // retry 4 — genuinely lands, beyond the old budget
+
+    const applyPromise = service.apply(
+      baseProposal({ chip: FplChip.BENCH_BOOST }),
+    );
+    await jest.runAllTimersAsync();
+    const log = await applyPromise;
+
+    expect(log.success).toBe(true);
+    expect(fplAuthClient.getMyTeam).toHaveBeenCalledTimes(5);
 
     jest.useRealTimers();
   });

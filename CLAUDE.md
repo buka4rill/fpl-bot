@@ -477,6 +477,33 @@ timers to skip the real delay) and `'retries and confirms success when a
 chip that lagged setLineup's own response shows up played on a later
 check'` (the false-negative case this was actually fixed for).
 
+**Same false-negative failure mode recurred live, twice, 2026-09-09 — the
+6-second retry budget above proved insufficient in practice.** The owner
+tested "Approve (with chip)" on a real Bench Boost proposal and got the
+same `execution FAILED — ...doesn't show the "bboost" chip as actually
+played afterward` alert — but both `/status` and the FPL app confirmed
+Bench Boost genuinely was active. Independently re-confirmed live via
+`/team-state/report`: `bboost: status_for_entry: 'active', played_by_entry:
+[4]`. Same root cause as the 2026-09-08 fix (FPL's propagation lag), just
+worse than the `CHIP_CONFIRMATION_RETRIES` (3) × `CHIP_CONFIRMATION_RETRY_DELAY_MS`
+(2s) = 6s budget assumed — apparently not a one-off, since this is now the
+second real occurrence.
+
+Fixed by widening the budget substantially rather than nudging it: both
+constants moved to `config.execution.chipConfirmationRetries`/
+`chipConfirmationRetryDelayMs` (`EXECUTION_CHIP_CONFIRMATION_RETRIES`/
+`EXECUTION_CHIP_CONFIRMATION_RETRY_DELAY_MS`, same config-driven pattern as
+`OPTIMIZER_HIT_RISK_PREMIUM`/`OPTIMIZER_CHIP_RISK_PREMIUM`), defaulting to
+8 retries × 5s = 40s, up from 6s. Deliberately generous rather than
+precisely tuned: the cost of waiting longer before reporting is low (the
+deadline is always hours away), while a false negative causes real
+confusion and sends an unnecessary "make this change manually" instruction
+— confirmed twice now that erring toward a longer wait is the right
+trade-off. See the regression test in `execution.service.spec.ts`:
+`'confirms success on a retry beyond the old 3-retry budget'`, which
+proves a chip confirming only on the 5th check (beyond what the old
+3-retry budget would have caught) still reports success.
+
 ## Open question: single-strategy optimizer vs. weighing strategies against each other (raised 2026-09-08, not decided)
 
 Even with the transfer-hit policy fix above, `SquadOptimizerService` still
