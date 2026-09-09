@@ -600,6 +600,72 @@ existing tests asserting `decide` was called with exactly 3 arguments,
 since Jest's `toHaveBeenCalledWith` treats a trailing explicit `undefined`
 as a real 4th argument, not the same as omitting it.
 
+**Real bug found and fixed live, 2026-09-09: "Approve (without chip)" could
+still play the chip.** The owner tested it against a real Bench Boost
+proposal from `/propose` and got a loud `execution FAILED` alert saying FPL
+didn't show `bboost` as played — right after `/status` had just confirmed
+Bench Boost was genuinely available. Root cause, confirmed by directly
+reproducing it against real local Postgres (not just reasoning about it):
+`applyNoChipAlternative` cleared the chip by setting `chip: undefined` on
+the entity before `save()` — but `Repository.save()` silently *ignores* an
+`undefined` property rather than clearing the column (this is standard
+TypeORM/Postgres behavior: `undefined` means "not specified, leave the
+existing value," only an explicit `null` clears a nullable column). So the
+DB kept the original with-chip proposal's `chip = 'bboost'` untouched, the
+in-memory return value *looked* correct (JS doesn't distinguish a key set
+to `undefined` from one that's genuinely gone), and `ExecutionService.apply`
+read the stale value back and tried to declare Bench Boost for real —
+directly against the owner's explicit choice. It only surfaced as a loud
+failure rather than a silent wrong chip play because FPL itself never
+confirmed the chip as played (the same `played_by_entry` check built for
+the Free Hit silent-drop bug, above) — confirmed after the fact via
+`/status` that Bench Boost genuinely never got played on the account, so no
+real harm was done, but the *attempt* itself was the actual bug.
+
+Every other nullable column on `ProposalEntity` (`appliedManually`,
+`resultReportedAt`, `noChipAlternative`) was already correctly typed
+`| null`; `chip` was the one column that got missed when the entity was
+written, which is exactly why this went unnoticed until an actual
+with-chip-then-cleared round trip was tested live. Fixed by widening
+`ProposalEntity.chip` to `FplChip | null | undefined` (entity now
+`implements Omit<Proposal, 'chip'>` rather than the full `Proposal`, since
+the domain interface's `chip?: FplChip` stays `undefined`-only on purpose),
+setting `chip: null` (not `undefined`) in `applyNoChipAlternative`, and
+adding `ProposalService.toDomain()` — a private normalizer
+(`chip: entity.chip ?? undefined`) applied at every method that hands a
+repository read back to a caller — so nothing outside `ProposalService`
+ever has to know about the null/undefined distinction; every other
+module's existing `proposal.chip !== undefined` check (`ExecutionService`,
+`AlertService`, etc.) keeps meaning exactly "no chip" without modification.
+
+This also fixed a second, latent bug the same root cause implied but the
+owner hadn't hit yet: TypeORM returns `null` (not `undefined`) for *any*
+genuinely chip-free proposal read back from Postgres, not just ones that
+went through `applyNoChipAlternative` — so `ExecutionService.apply`'s
+`proposal.chip !== undefined` guard was `true` for `null` too, meaning
+*every* approved chip-free proposal that had gone through a real DB round
+trip via `ApprovalService`/`updateStatus` would have entered the
+chip-confirmation retry block searching for a chip literally named `"null"`,
+burned `CHIP_CONFIRMATION_RETRIES` × `CHIP_CONFIRMATION_RETRY_DELAY_MS` (6s)
+retrying, and then falsely reported execution as failed — confirmed by
+directly calling `ExecutionService.apply()` with a `chip: null` proposal
+(mirroring a real DB read) before the fix landed. `toDomain()` fixes this
+the same way, for free.
+
+The existing unit tests never caught either bug: `proposal.service.spec.ts`'s
+`FakeProposalRepository.save()` used to just overwrite the whole stored row
+with whatever JS object was passed, including an explicit `chip: undefined`
+key, as if it genuinely cleared the column — nothing like real
+Postgres/TypeORM's "undefined is ignored" behavior. Fixed alongside the bug
+(`withoutUndefined()` helper in the fake's `save()`, merging only
+non-undefined properties onto the existing row) so this class of bug is
+actually catchable going forward, plus a dedicated regression test that
+does a *separate* re-read (`findById`, not just the mutated return value)
+after `applyNoChipAlternative` — confirmed this fails without the real fix
+(reverted `chip: null` back to `chip: undefined` locally to check) and
+passes with it. See `proposal.service.spec.ts`'s `'actually persists the
+cleared chip, not just on the return value'` test.
+
 **Live-testing the above surfaced a real prediction-calibration problem —
 not a bug, a modeling issue (2026-09-08).** The first real chip proposal
 generated after this feature shipped reported `expectedGain: 175.47`

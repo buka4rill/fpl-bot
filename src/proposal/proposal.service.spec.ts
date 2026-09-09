@@ -22,9 +22,26 @@ class FakeProposalRepository {
     return entity;
   }
 
+  // Mirrors real Postgres/TypeORM save() semantics (2026-09-09 fix): an
+  // `undefined` property means "not specified, leave the existing DB value
+  // alone" — only an explicit `null` clears a nullable column. The old
+  // "just overwrite the whole row" version of this method stored `chip:
+  // undefined` as if it genuinely cleared a previously-set chip, which is
+  // exactly the bug that let a stale chip survive "Approve (without chip)"
+  // in production — this fake never would have caught it.
   save(entity: ProposalEntity): Promise<ProposalEntity> {
-    this.rows.set(entity.id, entity);
-    return Promise.resolve(entity);
+    const existing = this.rows.get(entity.id);
+    const merged = existing
+      ? { ...existing, ...this.withoutUndefined(entity) }
+      : entity;
+    this.rows.set(entity.id, merged);
+    return Promise.resolve(merged);
+  }
+
+  private withoutUndefined(entity: ProposalEntity): Partial<ProposalEntity> {
+    return Object.fromEntries(
+      Object.entries(entity).filter(([, value]) => value !== undefined),
+    );
   }
 
   findOneBy(where: Partial<ProposalEntity>): Promise<ProposalEntity | null> {
@@ -386,6 +403,36 @@ describe('ProposalService', () => {
       expect(updated.captainId).toBe(2);
       expect(updated.hitCost).toBe(4);
       expect(updated.expectedGain).toBe(45);
+    });
+
+    it('actually persists the cleared chip, not just on the return value (regression, 2026-09-09)', async () => {
+      // Reproduces a real production incident: an owner approved "Approve
+      // (without chip)" on a Bench Boost proposal, and ExecutionService
+      // still tried to play Bench Boost anyway. Root cause was
+      // applyNoChipAlternative setting `chip: undefined`, which
+      // Repository.save() silently ignores rather than clearing — so the
+      // DB kept the original with-chip value even though the in-memory
+      // return object looked correct. A separate re-read (findById, a
+      // fresh repository query, not the mutated object applyNoChipAlternative
+      // itself returned) is the only way to catch that class of bug.
+      chipEvaluatorService.evaluateBestStrategy.mockResolvedValue({
+        best: {
+          chip: FplChip.BENCH_BOOST,
+          optimization,
+          netExpectedPoints: 60,
+        },
+        candidates: [
+          { chip: undefined, optimization, netExpectedPoints: 45 },
+          { chip: FplChip.BENCH_BOOST, optimization, netExpectedPoints: 60 },
+        ],
+      });
+      const { proposal } = await service.generateBestProposal();
+      expect(proposal.chip).toBe(FplChip.BENCH_BOOST); // sanity: really starts with a chip
+
+      await service.applyNoChipAlternative(proposal.id);
+      const reread = await service.findById(proposal.id);
+
+      expect(reread?.chip).toBeUndefined();
     });
 
     it('throws when the proposal has no chip-free alternative', async () => {

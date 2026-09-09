@@ -22,6 +22,17 @@ export class ProposalService {
     private readonly proposalRepository: Repository<ProposalEntity>,
   ) {}
 
+  // TypeORM returns `null` (not `undefined`) for ProposalEntity.chip when
+  // the DB column is NULL — but Proposal.chip is `FplChip | undefined`
+  // (2026-09-09 fix). Every method below that hands a repository read back
+  // to a caller goes through this, so nothing outside this service ever has
+  // to know about the null/undefined distinction — every other module's
+  // `proposal.chip !== undefined` check can keep meaning exactly "no chip"
+  // without also needing `!== null`.
+  private toDomain(entity: ProposalEntity): Proposal {
+    return { ...entity, chip: entity.chip ?? undefined };
+  }
+
   // `freeTransfers` can't be derived from the public API (see CurrentSquad's
   // doc comment) — passed through to SquadOptimizerService, which defaults
   // it to the standard weekly amount if not given. `chip` is a manual
@@ -138,9 +149,15 @@ export class ProposalService {
       viceCaptainId: alt.viceCaptainId,
       expectedGain: alt.expectedGain,
       hitCost: alt.hitCost,
-      chip: undefined,
+      // `null`, not `undefined` (2026-09-09 fix, see ProposalEntity.chip's
+      // comment) — `save()` silently ignores an `undefined` property rather
+      // than clearing the column, so this used to leave the original
+      // with-chip proposal's chip value in the DB untouched. Confirmed live:
+      // this let ExecutionService actually attempt to play a chip the owner
+      // had explicitly declined via "Approve (without chip)".
+      chip: null,
     };
-    return this.proposalRepository.save(updated);
+    return this.toDomain(await this.proposalRepository.save(updated));
   }
 
   // Shared by any proposal source (the optimizer, or a manual override like a
@@ -154,12 +171,12 @@ export class ProposalService {
       status: ProposalStatus.PENDING,
       createdAt: new Date().toISOString(),
     });
-    return this.proposalRepository.save(entity);
+    return this.toDomain(await this.proposalRepository.save(entity));
   }
 
   async findById(id: string): Promise<Proposal | undefined> {
     const proposal = await this.proposalRepository.findOneBy({ id });
-    return proposal ?? undefined;
+    return proposal ? this.toDomain(proposal) : undefined;
   }
 
   // Restart-safe "have we already *automatically* proposed for this
@@ -186,11 +203,14 @@ export class ProposalService {
       gameweekId,
       source: TriggerSource.AUTO,
     });
-    return proposal ?? undefined;
+    return proposal ? this.toDomain(proposal) : undefined;
   }
 
   async findAllPending(): Promise<Proposal[]> {
-    return this.proposalRepository.findBy({ status: ProposalStatus.PENDING });
+    const proposals = await this.proposalRepository.findBy({
+      status: ProposalStatus.PENDING,
+    });
+    return proposals.map((proposal) => this.toDomain(proposal));
   }
 
   async updateStatus(id: string, status: ProposalStatus): Promise<Proposal> {
@@ -199,7 +219,7 @@ export class ProposalService {
       throw new Error(`No proposal found with id ${id}.`);
     }
     const updated: ProposalEntity = { ...proposal, status };
-    return this.proposalRepository.save(updated);
+    return this.toDomain(await this.proposalRepository.save(updated));
   }
 
   // Answer to the post-deadline "did you end up making the changes
@@ -213,7 +233,7 @@ export class ProposalService {
       throw new Error(`No proposal found with id ${id}.`);
     }
     const updated: ProposalEntity = { ...proposal, appliedManually: applied };
-    return this.proposalRepository.save(updated);
+    return this.toDomain(await this.proposalRepository.save(updated));
   }
 
   // Every terminal proposal (APPROVED/REJECTED/EXPIRED — PENDING is
@@ -222,13 +242,14 @@ export class ProposalService {
   // which further filters to whichever of these belong to a gameweek
   // that's actually finished by now.
   async findUnreportedTerminal(): Promise<Proposal[]> {
-    return this.proposalRepository.find({
+    const proposals = await this.proposalRepository.find({
       where: [
         { status: ProposalStatus.APPROVED, resultReportedAt: IsNull() },
         { status: ProposalStatus.REJECTED, resultReportedAt: IsNull() },
         { status: ProposalStatus.EXPIRED, resultReportedAt: IsNull() },
       ],
     });
+    return proposals.map((proposal) => this.toDomain(proposal));
   }
 
   // One-time-send guard for the points report, same idea as the dedupe on
@@ -243,6 +264,6 @@ export class ProposalService {
       ...proposal,
       resultReportedAt: new Date().toISOString(),
     };
-    return this.proposalRepository.save(updated);
+    return this.toDomain(await this.proposalRepository.save(updated));
   }
 }
