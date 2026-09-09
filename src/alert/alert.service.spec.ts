@@ -495,5 +495,39 @@ describe('AlertService', () => {
       const [text] = telegram.sendMessage.mock.calls[0] as [string];
       expect(text).toContain("(You told me you didn't apply it.)");
     });
+
+    it('flags a diverged proposal with the specific reasons instead of a silent comparison', async () => {
+      await service.sendResultReport(proposal, 50, 60, {
+        diverged: true,
+        reasons: [
+          'chip: I applied bboost, but FPL shows no chip active at kickoff',
+        ],
+      });
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).toContain(
+        '⚠️ Something changed after I applied this — not a fair model comparison:',
+      );
+      expect(text).toContain(
+        '• chip: I applied bboost, but FPL shows no chip active at kickoff',
+      );
+    });
+
+    it('adds no divergence line when the plan matched at kickoff', async () => {
+      await service.sendResultReport(proposal, 50, 50, {
+        diverged: false,
+        reasons: [],
+      });
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).not.toContain('Something changed');
+    });
+
+    it('adds no divergence line when no divergence result is given (REJECTED/EXPIRED)', async () => {
+      await service.sendResultReport(proposal, 50, 50);
+
+      const [text] = telegram.sendMessage.mock.calls[0] as [string];
+      expect(text).not.toContain('Something changed');
+    });
   });
 });

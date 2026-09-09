@@ -9,7 +9,11 @@ import { IngestionService } from '../ingestion/ingestion.service';
 import { ProposalService } from '../proposal/proposal.service';
 import { AlertService } from '../alert/alert.service';
 import { Player, Proposal, SquadRules } from '../common/types/domain.types';
-import { computeProposalActualScore } from './gameweek-scoring.util';
+import { ProposalStatus } from '../common/enums/proposal-status.enum';
+import {
+  computeProposalActualScore,
+  detectDivergence,
+} from './gameweek-scoring.util';
 
 // Same interval as DeadlineWatcherService — results roll in over days, not
 // hours, so this doesn't need to be more frequent; reusing the constant
@@ -94,7 +98,7 @@ export class ResultsService implements OnModuleInit, OnModuleDestroy {
     rules: SquadRules,
   ): Promise<boolean> {
     try {
-      const [playerStats, { actualPoints }] = await Promise.all([
+      const [playerStats, actual] = await Promise.all([
         this.ingestionService.getGameweekPlayerStats(proposal.gameweekId),
         this.ingestionService.getGameweekResult(
           this.teamId(),
@@ -107,12 +111,23 @@ export class ResultsService implements OnModuleInit, OnModuleDestroy {
         players,
         rules,
       );
+      // Only meaningful for APPROVED — REJECTED/EXPIRED never had anything
+      // of the bot's own live at kickoff to diverge from (see
+      // detectDivergence's doc comment).
+      const divergence =
+        proposal.status === ProposalStatus.APPROVED
+          ? detectDivergence(proposal, actual)
+          : undefined;
       await this.alertService.sendResultReport(
         proposal,
         predictedScore,
-        actualPoints,
+        actual.actualPoints,
+        divergence,
       );
-      await this.proposalService.markResultReported(proposal.id);
+      await this.proposalService.markResultReported(
+        proposal.id,
+        divergence?.diverged,
+      );
       return true;
     } catch (error) {
       this.logger.warn(

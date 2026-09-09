@@ -4,6 +4,7 @@ import { StatsProviderClient } from './clients/stats-provider.client';
 import {
   CurrentSquad,
   Fixture,
+  GameweekOutcome,
   Gameweek,
   Player,
   PlayerGameweekStats,
@@ -83,16 +84,26 @@ export class IngestionService {
     );
   }
 
-  // The real points actually scored that gameweek, for ResultsService to
-  // compare against the proposal's simulated score. A separate method from
+  // The real points actually scored that gameweek, plus what was actually
+  // live at kickoff (chip/captain/starting XI) — ResultsService compares
+  // the former against the proposal's simulated score, and the latter
+  // against the proposal's stored plan to detect a post-approval manual
+  // edit (see GameweekOutcome's doc comment). A separate method from
   // getCurrentSquad below since that one is pinned to entry.current_event —
   // this needs an arbitrary past gameweek instead.
   async getGameweekResult(
     teamId: number,
     gameweek: number,
-  ): Promise<{ actualPoints: number }> {
+  ): Promise<GameweekOutcome> {
     const picks = await this.fplPublicClient.getEntryPicks(teamId, gameweek);
-    return { actualPoints: picks.entry_history.points };
+    return {
+      actualPoints: picks.entry_history.points,
+      activeChip: this.matchChip(picks.active_chip),
+      captainId: picks.picks.find((pick) => pick.is_captain)?.element,
+      startingXI: picks.picks
+        .filter((pick) => pick.position <= 11)
+        .map((pick) => pick.element),
+    };
   }
 
   // No `freeTransfers` on the result — the public API doesn't expose your
@@ -179,13 +190,19 @@ export class IngestionService {
     }));
   }
 
+  // Shared by normalizeCurrentSquad and getGameweekResult — FPL's
+  // active_chip is a raw string (or null), matched against FplChip's enum
+  // values to get an `undefined`-means-none result consistent with the
+  // rest of the domain.
+  private matchChip(rawChip: string | null): FplChip | undefined {
+    return Object.values(FplChip).find((chip) => chip === rawChip);
+  }
+
   private normalizeCurrentSquad(
     entry: RawEntry,
     picks: EntryPicksResponse,
   ): CurrentSquad {
-    const activeChip = Object.values(FplChip).find(
-      (chip) => chip === picks.active_chip,
-    );
+    const activeChip = this.matchChip(picks.active_chip);
 
     return {
       teamId: entry.id,

@@ -5,6 +5,7 @@ import { Position } from '../common/enums/position.enum';
 import { FplChip } from '../common/enums/chip.enum';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import type { ChipCandidate } from '../optimization/chip-evaluator.service';
+import type { DivergenceResult } from '../results/gameweek-scoring.util';
 
 const POSITION_ORDER: Position[] = [
   Position.GKP,
@@ -88,10 +89,20 @@ export class AlertService {
   // player points, autosubs, and chip effects applied to what was
   // *proposed*, not what happened); `actualScore` is what the account
   // really scored that gameweek, independent of this proposal's fate.
+  // `divergence` — only ever passed for APPROVED proposals (ResultsService
+  // never computes it for REJECTED/EXPIRED, see detectDivergence's doc
+  // comment) — flags when what FPL shows was actually live at kickoff no
+  // longer matches what this proposal says was executed, e.g. the owner
+  // cancelled a chip or edited the lineup in the FPL app after approval.
+  // When that's happened, the predicted-vs-actual delta below isn't a fair
+  // model-accuracy check (the "actual" score reflects the owner's later
+  // edit, not the model's plan), so the report says so explicitly instead
+  // of silently presenting a misleading comparison.
   async sendResultReport(
     proposal: Proposal,
     predictedScore: number,
     actualScore: number,
+    divergence?: DivergenceResult,
   ): Promise<void> {
     const delta = actualScore - predictedScore;
     const pts = (n: number): string => `${n} pt${Math.abs(n) === 1 ? '' : 's'}`;
@@ -103,9 +114,16 @@ export class AlertService {
           : `📉 My suggestion would have scored ${pts(-delta)} more`;
 
     const contextLine = this.resultContextLine(proposal);
+    const divergenceLines = divergence?.diverged
+      ? [
+          '⚠️ Something changed after I applied this — not a fair model comparison:',
+          ...divergence.reasons.map((reason) => `• ${reason}`),
+        ]
+      : [];
     const text = [
       `📊 *GW${proposal.gameweekId} Result*`,
       ...(contextLine ? [contextLine] : []),
+      ...divergenceLines,
       `My suggestion: ${predictedScore} pts`,
       `Your actual score: ${actualScore} pts`,
       deltaLine,

@@ -131,12 +131,20 @@ export interface RawEntry {
   last_deadline_value: number; // tenths of £m
 }
 
-// GET /api/entry/{teamId}/event/{gw}/picks/ — captured 2026-09-07. No
-// selling_price per pick — that's only exposed by the authenticated
-// my-team endpoint, which IngestionModule deliberately doesn't touch.
+// GET /api/entry/{teamId}/event/{gw}/picks/ — captured 2026-09-07, widened
+// 2026-09-09 to add position/multiplier/is_captain/is_vice_captain (same
+// fields the authenticated my-team endpoint's FplPick already has —
+// standard on FPL's public picks endpoint too, just unused/untyped until
+// ResultsService's divergence check needed them). No selling_price per
+// pick — that's only exposed by the authenticated my-team endpoint, which
+// IngestionModule deliberately doesn't touch.
 export interface RawPick {
   element: number;
   element_type: number;
+  position: number; // 1-11 starting XI, 12-15 bench (order = autosub priority)
+  multiplier: number;
+  is_captain: boolean;
+  is_vice_captain: boolean;
 }
 
 export interface RawEntryHistory {

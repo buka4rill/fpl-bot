@@ -94,6 +94,9 @@ export class ProposalEntity implements Omit<Proposal, 'chip'> {
   @Column({ type: 'timestamptz', nullable: true })
   resultReportedAt?: string | null;
 
+  @Column({ type: 'boolean', nullable: true })
+  divergedFromPlan?: boolean | null;
+
   @Column({ type: 'jsonb', nullable: true })
   noChipAlternative?: NoChipAlternative | null;
 }

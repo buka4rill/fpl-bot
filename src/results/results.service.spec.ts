@@ -8,6 +8,7 @@ import { Gameweek, Player, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
 import { TriggerSource } from '../common/enums/trigger-source.enum';
+import { FplChip } from '../common/enums/chip.enum';
 
 describe('ResultsService', () => {
   let service: ResultsService;
@@ -84,7 +85,16 @@ describe('ResultsService', () => {
         },
       }),
       getGameweekPlayerStats: jest.fn().mockResolvedValue(new Map()),
-      getGameweekResult: jest.fn().mockResolvedValue({ actualPoints: 50 }),
+      // Matches baseProposal's own plan by default (captainId: 1, empty
+      // lineup, no chip) so most tests below exercise the clean
+      // "no divergence" case without needing to think about it — tests
+      // that specifically care about divergence override this.
+      getGameweekResult: jest.fn().mockResolvedValue({
+        actualPoints: 50,
+        activeChip: undefined,
+        captainId: 1,
+        startingXI: [],
+      }),
     };
     proposalService = {
       findUnreportedTerminal: jest.fn().mockResolvedValue([]),
@@ -114,7 +124,10 @@ describe('ResultsService', () => {
     const reported = await service.checkFinishedGameweeks();
 
     expect(alertService.sendResultReport).toHaveBeenCalledTimes(1);
-    expect(proposalService.markResultReported).toHaveBeenCalledWith('prop-1');
+    expect(proposalService.markResultReported).toHaveBeenCalledWith(
+      'prop-1',
+      false,
+    );
     expect(reported).toBe(1);
   });
 
@@ -157,8 +170,81 @@ describe('ResultsService', () => {
     );
   });
 
+  describe('divergence detection', () => {
+    it('flags an APPROVED proposal whose actual kickoff state no longer matches what was executed', async () => {
+      // Mirrors a real incident: the owner cancelled the chip via the FPL
+      // app after the bot had already applied it.
+      ingestionService.getGameweekResult.mockResolvedValue({
+        actualPoints: 50,
+        activeChip: undefined, // proposal declared a chip, FPL shows none active
+        captainId: 1,
+        startingXI: [],
+      });
+      proposalService.findUnreportedTerminal.mockResolvedValue([
+        baseProposal({ chip: FplChip.BENCH_BOOST }),
+      ]);
+
+      await service.checkFinishedGameweeks();
+
+      expect(alertService.sendResultReport).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'prop-1' }),
+        expect.any(Number),
+        50,
+        {
+          diverged: true,
+          reasons: [
+            'chip: I applied bboost, but FPL shows no chip active at kickoff',
+          ],
+        },
+      );
+      expect(proposalService.markResultReported).toHaveBeenCalledWith(
+        'prop-1',
+        true,
+      );
+    });
+
+    it('does not compute divergence for a REJECTED proposal — nothing of the bot was ever live', async () => {
+      proposalService.findUnreportedTerminal.mockResolvedValue([
+        baseProposal({ status: ProposalStatus.REJECTED }),
+      ]);
+
+      await service.checkFinishedGameweeks();
+
+      expect(alertService.sendResultReport).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'prop-1' }),
+        expect.any(Number),
+        expect.any(Number),
+        undefined,
+      );
+      expect(proposalService.markResultReported).toHaveBeenCalledWith(
+        'prop-1',
+        undefined,
+      );
+    });
+
+    it('does not compute divergence for an EXPIRED proposal', async () => {
+      proposalService.findUnreportedTerminal.mockResolvedValue([
+        baseProposal({ status: ProposalStatus.EXPIRED }),
+      ]);
+
+      await service.checkFinishedGameweeks();
+
+      expect(alertService.sendResultReport).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'prop-1' }),
+        expect.any(Number),
+        expect.any(Number),
+        undefined,
+      );
+    });
+  });
+
   it('passes the computed predicted score and real actual score to the alert', async () => {
-    ingestionService.getGameweekResult.mockResolvedValue({ actualPoints: 63 });
+    ingestionService.getGameweekResult.mockResolvedValue({
+      actualPoints: 63,
+      activeChip: undefined,
+      captainId: 1,
+      startingXI: [],
+    });
     proposalService.findUnreportedTerminal.mockResolvedValue([
       baseProposal({
         gameweekId: 4,
@@ -177,6 +263,7 @@ describe('ResultsService', () => {
       expect.objectContaining({ id: 'prop-1' }),
       0, // no players in the stats map -> nothing scores
       63,
+      { diverged: false, reasons: [] },
     );
   });
 
@@ -189,8 +276,14 @@ describe('ResultsService', () => {
     await service.checkFinishedGameweeks();
 
     expect(alertService.sendResultReport).toHaveBeenCalledTimes(2);
-    expect(proposalService.markResultReported).toHaveBeenCalledWith('prop-1');
-    expect(proposalService.markResultReported).toHaveBeenCalledWith('prop-2');
+    expect(proposalService.markResultReported).toHaveBeenCalledWith(
+      'prop-1',
+      false,
+    );
+    expect(proposalService.markResultReported).toHaveBeenCalledWith(
+      'prop-2',
+      false,
+    );
   });
 
   it('does not mark as reported, and does not throw, when sending the report fails', async () => {
@@ -217,7 +310,10 @@ describe('ResultsService', () => {
     const reported = await service.checkFinishedGameweeks();
 
     expect(proposalService.markResultReported).toHaveBeenCalledTimes(1);
-    expect(proposalService.markResultReported).toHaveBeenCalledWith('prop-2');
+    expect(proposalService.markResultReported).toHaveBeenCalledWith(
+      'prop-2',
+      false,
+    );
     expect(reported).toBe(1);
   });
 });

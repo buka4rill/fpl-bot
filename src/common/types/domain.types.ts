@@ -156,6 +156,17 @@ export interface Proposal {
   // this proposal — a one-time-send guard, same idea as the dedupe on
   // proposal generation itself. Null/undefined until then.
   resultReportedAt?: string | null;
+  // Only meaningful for APPROVED proposals (null/undefined otherwise —
+  // REJECTED/EXPIRED never had anything of the bot's own to diverge from).
+  // Set by ResultsService at result-report time: true if what was actually
+  // live at kickoff (chip/captain/lineup, from the real picks endpoint)
+  // no longer matches what this proposal says was executed — e.g. the
+  // owner cancelled a chip or edited the lineup in the FPL app after
+  // approval. A diverged gameweek's predicted-vs-actual comparison isn't a
+  // fair model-accuracy check (the "actual" score reflects the owner's
+  // later edit, not the model's plan) and step 5's eventual backtesting
+  // should exclude it — see CLAUDE.md's "Divergence detection" note.
+  divergedFromPlan?: boolean | null;
   // See NoChipAlternative — only set when this proposal's own `chip` is
   // set, so the Telegram alert can offer "Approve (without chip)" as a
   // real, execution-ready third option.
@@ -172,6 +183,21 @@ export interface PlayerGameweekStats {
   totalPoints: number;
   minutes: number;
   played: boolean;
+}
+
+// What actually happened for a team in a single finished gameweek, from
+// the public entry/picks endpoint — the ground truth ResultsService's
+// divergence check compares a proposal's stored plan against. `activeChip`/
+// `captainId` are undefined when none was set/found, matching how the rest
+// of the domain represents "no chip"/no match (see ProposalService.toDomain
+// for why this matters — TypeORM's null vs. undefined isn't a concern here
+// since this is built fresh from a live API response, not read back from
+// the DB).
+export interface GameweekOutcome {
+  actualPoints: number;
+  activeChip: FplChip | undefined;
+  captainId: number | undefined;
+  startingXI: number[];
 }
 
 export interface Approval {

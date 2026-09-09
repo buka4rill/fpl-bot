@@ -254,8 +254,12 @@ export class ProposalService {
 
   // One-time-send guard for the points report, same idea as the dedupe on
   // proposal generation itself — stops ResultsService re-sending on every
-  // hourly poll once a gameweek's report has gone out.
-  async markResultReported(id: string): Promise<Proposal> {
+  // hourly poll once a gameweek's report has gone out. `diverged` is
+  // ResultsService's DivergenceResult.diverged (APPROVED proposals only —
+  // see detectDivergence's doc comment), persisted here so step 5's
+  // eventual backtesting can filter it out without recomputing the
+  // comparison every time.
+  async markResultReported(id: string, diverged?: boolean): Promise<Proposal> {
     const proposal = await this.proposalRepository.findOneBy({ id });
     if (!proposal) {
       throw new Error(`No proposal found with id ${id}.`);
@@ -263,6 +267,7 @@ export class ProposalService {
     const updated: ProposalEntity = {
       ...proposal,
       resultReportedAt: new Date().toISOString(),
+      divergedFromPlan: diverged ?? null,
     };
     return this.toDomain(await this.proposalRepository.save(updated));
   }

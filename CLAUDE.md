@@ -51,7 +51,7 @@ file is the short version for whichever session picks this repo up next.
 | `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers, Bench Boost, and Triple Captain all verified live 2026-09-08; Wildcard/Free Hit still unverified — see below |
 | `auth` | implemented (2026-09-08) — holds `FplAuthClient`/the authenticated session (moved out of `ExecutionModule`, see "Execution auth" below); `AuthService.isAuthenticated()`/`assertAuthenticated()` let other modules check/gate on login state; `POST /auth/token` (shared-secret guarded) applies a freshly-captured refresh token to the running instance — the landing spot for `pnpm run auth:login`'s Playwright-assisted capture (`scripts/auth-login.ts`) |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday); also gates on `AuthService.isAuthenticated()` before generating a proposal — see "Execution auth" below |
-| `results` | implemented (2026-09-08) — `ResultsService` (own hourly poll, public-API only) reports "how did my suggestion actually score" for every terminal proposal (APPROVED/REJECTED/EXPIRED) once its gameweek finishes — full autosub/chip-accurate simulation, not an approximation; `POST /results/report` manually re-triggers it — see "Post-gameweek results report" below |
+| `results` | implemented (2026-09-08) — `ResultsService` (own hourly poll, public-API only) reports "how did my suggestion actually score" for every terminal proposal (APPROVED/REJECTED/EXPIRED) once its gameweek finishes — full autosub/chip-accurate simulation, not an approximation; `POST /results/report` manually re-triggers it — see "Post-gameweek results report" below. Also flags a post-approval manual edit in the FPL app (chip/captain/lineup) via a real picks-endpoint cross-check, 2026-09-09 — see "Divergence detection" below |
 | persistence | implemented — Postgres + TypeORM, see "Persistence" below |
 
 ## Defensive-contribution scoring (2026-09-08)
@@ -1172,6 +1172,50 @@ the model, not a "what if"), otherwise noting REJECTED or, for EXPIRED,
 echoing back whatever the check-in's `appliedManually` answer was (or that
 none came in).
 
+## Divergence detection (2026-09-09, implemented)
+
+Raised while investigating a live chip-confirmation incident (see
+"Chip-confirmation" fixes above): the post-gameweek results report treats
+every APPROVED proposal's predicted-vs-actual comparison as a clean
+model-accuracy check, but that's only true if what got executed is still
+what was actually live at kickoff. If the owner cancels a chip or edits
+the lineup in the FPL app *after* approval — something the bot has no way
+of knowing about, since it never re-checks a proposal once executed — the
+"actual" score reflects that later edit, not the model's plan, and the
+comparison silently misattributes the difference to the model being wrong.
+
+Fixed by cross-checking the real picks endpoint once a gameweek finishes,
+same idea as the `appliedManually` check-in but automatic and evidence-based
+rather than asked for. `IngestionService.getGameweekResult` (already
+fetching `EntryPicksResponse` for `entry_history.points`) now also returns
+`activeChip`/`captainId`/`startingXI`, normalized from the picks list —
+`RawPick` (`fpl-api.types.ts`) was widened from just
+`element`/`element_type` to also capture `position`/`multiplier`/
+`is_captain`/`is_vice_captain`, the same fields the authenticated
+`FplPick` already has (standard on FPL's public picks endpoint too, just
+never typed since nothing needed them before). New pure function
+`detectDivergence` (`gameweek-scoring.util.ts`, tested directly like
+`computeProposalActualScore`) compares a proposal's `chip`/`captainId`/
+`lineup` against that real outcome and returns which specific fields
+differ, if any — deliberately scoped to chip/captain/starting-XI
+membership only, not bench order or vice-captain (those don't change the
+actual score the way a swapped captain or dropped chip does).
+
+`ResultsService.reportResult` only calls this for `status: APPROVED` —
+REJECTED/EXPIRED never had anything of the bot's own live at kickoff to
+diverge from, so the check would be meaningless (and always "diverged")
+for them. When it fires and finds a mismatch, `AlertService.sendResultReport`
+shows the specific reasons instead of presenting the predicted-vs-actual
+delta as a clean comparison (`⚠️ Something changed after I applied this —
+not a fair model comparison:` followed by each reason), and the result is
+persisted as `Proposal.divergedFromPlan` (new nullable boolean column,
+migration `AddDivergedFromPlanToProposals...`, set via
+`ProposalService.markResultReported`'s new second argument) so step 5's
+eventual backtesting can exclude a diverged gameweek without recomputing
+the comparison — the SQL in "Step 5's data checkpoint" above should filter
+`divergedFromPlan IS NOT TRUE` alongside `source = 'AUTO'` once this has
+had time to actually flag something live.
+
 ## Deploy (Fly.io) + CI/CD (2026-09-08 — live)
 
 Raised 2026-09-07: `dev:webhook`'s Cloudflare *quick* tunnel
@@ -1490,10 +1534,15 @@ January-February 2027**. Verify the real count periodically rather than
 trusting this projection as it ages:
 ```sql
 SELECT count(DISTINCT (season, "gameweekId")) FROM proposals
-WHERE "resultReportedAt" IS NOT NULL AND source = 'AUTO';
+WHERE "resultReportedAt" IS NOT NULL AND source = 'AUTO'
+  AND "divergedFromPlan" IS NOT TRUE;
 ```
 (the `source = 'AUTO'` filter is the AUTO/MANUAL tagging fix above,
-2026-09-09 — without it this count still includes GW4's contaminated rows)
+2026-09-09 — without it this count still includes GW4's contaminated rows;
+`"divergedFromPlan" IS NOT TRUE` is the divergence-detection fix, same
+day — excludes a gameweek where the owner edited the plan in the FPL app
+after approval, since that week's predicted-vs-actual comparison isn't a
+fair model check)
 run via `fly postgres connect -a fpl-bot-buka4rill-db` (see README's
 "Production (Fly.io)" section for the connection gotchas — it drops you
 into the `postgres` database, not the app's `fpl_bot_buka4rill` one, and

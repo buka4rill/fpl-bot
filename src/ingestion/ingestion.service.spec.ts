@@ -316,8 +316,22 @@ describe('IngestionService', () => {
       active_chip: 'bboost',
       entry_history: { event: 3, points: 60, bank: 5, value: 1005 },
       picks: [
-        { element: 1, element_type: 1 },
-        { element: 2, element_type: 2 },
+        {
+          element: 1,
+          element_type: 1,
+          position: 1,
+          multiplier: 1,
+          is_captain: false,
+          is_vice_captain: false,
+        },
+        {
+          element: 2,
+          element_type: 2,
+          position: 2,
+          multiplier: 2,
+          is_captain: true,
+          is_vice_captain: false,
+        },
       ],
     };
     fplPublicClient.getEntry.mockResolvedValue(rawEntry);
@@ -353,5 +367,72 @@ describe('IngestionService', () => {
     const squad = await service.getCurrentSquad(42);
 
     expect(squad.activeChip).toBeUndefined();
+  });
+
+  describe('getGameweekResult', () => {
+    it('normalizes actual points, active chip, captain, and starting XI', async () => {
+      fplPublicClient.getEntryPicks.mockResolvedValue({
+        active_chip: 'bboost',
+        entry_history: { event: 4, points: 72, bank: 5, value: 1005 },
+        picks: [
+          {
+            element: 1,
+            element_type: 1,
+            position: 1,
+            multiplier: 1,
+            is_captain: false,
+            is_vice_captain: false,
+          },
+          {
+            element: 2,
+            element_type: 3,
+            position: 2,
+            multiplier: 2,
+            is_captain: true,
+            is_vice_captain: false,
+          },
+          {
+            element: 12,
+            element_type: 1,
+            position: 12, // bench — excluded from startingXI
+            multiplier: 0,
+            is_captain: false,
+            is_vice_captain: false,
+          },
+        ],
+      });
+
+      const result = await service.getGameweekResult(42, 4);
+
+      expect(fplPublicClient.getEntryPicks).toHaveBeenCalledWith(42, 4);
+      expect(result).toEqual({
+        actualPoints: 72,
+        activeChip: FplChip.BENCH_BOOST,
+        captainId: 2,
+        startingXI: [1, 2],
+      });
+    });
+
+    it('leaves activeChip/captainId undefined when there is no chip or captain', async () => {
+      fplPublicClient.getEntryPicks.mockResolvedValue({
+        active_chip: null,
+        entry_history: { event: 4, points: 40, bank: 0, value: 1000 },
+        picks: [
+          {
+            element: 1,
+            element_type: 1,
+            position: 1,
+            multiplier: 1,
+            is_captain: false,
+            is_vice_captain: false,
+          },
+        ],
+      });
+
+      const result = await service.getGameweekResult(42, 4);
+
+      expect(result.activeChip).toBeUndefined();
+      expect(result.captainId).toBeUndefined();
+    });
   });
 });

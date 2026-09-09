@@ -1,4 +1,5 @@
 import {
+  GameweekOutcome,
   Player,
   PlayerGameweekStats,
   Proposal,
@@ -143,4 +144,56 @@ function isValidFormation(
     const count = countByPosition.get(rule.position) ?? 0;
     return count >= rule.minStarting && count <= rule.maxStarting;
   });
+}
+
+type DivergenceProposal = Pick<Proposal, 'chip' | 'captainId' | 'lineup'>;
+
+export interface DivergenceResult {
+  diverged: boolean;
+  // Empty when diverged is false. Human-readable, used directly in the
+  // Telegram results report — not meant for programmatic matching.
+  reasons: string[];
+}
+
+// Compares what a proposal says was executed against what FPL's own picks
+// endpoint shows was actually live at kickoff — catches a post-approval
+// manual edit in the FPL app (a cancelled chip, a changed captain, a
+// reshuffled lineup) that the bot's own execution never saw and has no
+// other way of knowing about. Only meaningful for an APPROVED proposal —
+// callers should not call this for REJECTED/EXPIRED, where "the bot's plan
+// vs. reality" was never expected to match in the first place.
+//
+// Deliberately only compares chip/captain/starting-XI membership, not bench
+// order or vice-captain — those don't change the actual score the way a
+// swapped captain or dropped chip does, and the bar here is "was this
+// gameweek's predicted-vs-actual comparison a fair model-accuracy check,"
+// not "did literally nothing change."
+export function detectDivergence(
+  proposal: DivergenceProposal,
+  actual: GameweekOutcome,
+): DivergenceResult {
+  const reasons: string[] = [];
+
+  if (proposal.chip !== actual.activeChip) {
+    reasons.push(
+      `chip: I applied ${proposal.chip ?? 'no chip'}, but FPL shows ${actual.activeChip ?? 'no chip'} active at kickoff`,
+    );
+  }
+  if (proposal.captainId !== actual.captainId) {
+    reasons.push(
+      `captain: I set player ${proposal.captainId} as captain, but FPL shows a different captain at kickoff`,
+    );
+  }
+  const proposedXI = new Set(proposal.lineup);
+  const actualXI = new Set(actual.startingXI);
+  const lineupChanged =
+    proposedXI.size !== actualXI.size ||
+    proposal.lineup.some((id) => !actualXI.has(id));
+  if (lineupChanged) {
+    reasons.push(
+      "lineup: the starting XI at kickoff doesn't match what I applied",
+    );
+  }
+
+  return { diverged: reasons.length > 0, reasons };
 }
