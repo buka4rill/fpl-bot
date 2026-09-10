@@ -100,11 +100,5 @@
     "{scripts,test}/**/*.ts": [
       "eslint --fix"
     ]
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@parcel/watcher",
-      "unrs-resolver"
-    ]
   }
 }
