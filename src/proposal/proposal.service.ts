@@ -36,8 +36,9 @@ export class ProposalService {
   // `freeTransfers` can't be derived from the public API (see CurrentSquad's
   // doc comment) — passed through to SquadOptimizerService, which defaults
   // it to the standard weekly amount if not given. `chip` is a manual
-  // declaration ("I've decided to play this chip this week") — nothing
-  // currently decides this automatically (ChipEvaluatorService is a stub).
+  // declaration ("I've decided to play this chip this week") for this
+  // method specifically — see generateBestProposal below for the automatic
+  // "decide for me" path (ChipEvaluatorService is no longer a stub).
   async generateProposal(
     freeTransfers?: number,
     chip?: FplChip,
