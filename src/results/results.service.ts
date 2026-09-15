@@ -116,7 +116,7 @@ export class ResultsService implements OnModuleInit, OnModuleDestroy {
       // detectDivergence's doc comment).
       const divergence =
         proposal.status === ProposalStatus.APPROVED
-          ? detectDivergence(proposal, actual)
+          ? detectDivergence(proposal, actual, players)
           : undefined;
       await this.alertService.sendResultReport(
         proposal,

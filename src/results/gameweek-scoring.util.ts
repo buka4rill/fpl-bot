@@ -171,8 +171,12 @@ export interface DivergenceResult {
 export function detectDivergence(
   proposal: DivergenceProposal,
   actual: GameweekOutcome,
+  players: Player[],
 ): DivergenceResult {
   const reasons: string[] = [];
+  const playerById = new Map(players.map((player) => [player.id, player]));
+  const name = (id: number | undefined): string =>
+    id === undefined ? 'no captain' : (playerById.get(id)?.webName ?? `#${id}`);
 
   if (proposal.chip !== actual.activeChip) {
     reasons.push(
@@ -181,7 +185,7 @@ export function detectDivergence(
   }
   if (proposal.captainId !== actual.captainId) {
     reasons.push(
-      `captain: I set player ${proposal.captainId} as captain, but FPL shows a different captain at kickoff`,
+      `captain: I set ${name(proposal.captainId)} as captain, but FPL shows ${name(actual.captainId)} at kickoff`,
     );
   }
   const proposedXI = new Set(proposal.lineup);

@@ -299,8 +299,29 @@ describe('detectDivergence', () => {
     startingXI: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
   };
 
+  const divergencePlayers: Player[] = [
+    {
+      id: 1,
+      webName: 'Salah',
+      fullName: 'Mohamed Salah',
+      teamId: 1,
+      position: Position.MID,
+    },
+    {
+      id: 2,
+      webName: 'Palmer',
+      fullName: 'Cole Palmer',
+      teamId: 2,
+      position: Position.MID,
+    },
+  ];
+
   it('reports no divergence when chip/captain/lineup all match', () => {
-    const result = detectDivergence(divergenceProposal, matchingActual);
+    const result = detectDivergence(
+      divergenceProposal,
+      matchingActual,
+      divergencePlayers,
+    );
 
     expect(result).toEqual({ diverged: false, reasons: [] });
   });
@@ -309,6 +330,7 @@ describe('detectDivergence', () => {
     const result = detectDivergence(
       { ...divergenceProposal, chip: FplChip.BENCH_BOOST },
       matchingActual, // activeChip still undefined — owner cancelled it
+      divergencePlayers,
     );
 
     expect(result.diverged).toBe(true);
@@ -321,28 +343,46 @@ describe('detectDivergence', () => {
     const result = detectDivergence(
       { ...divergenceProposal, chip: FplChip.BENCH_BOOST },
       { ...matchingActual, activeChip: FplChip.TRIPLE_CAPTAIN },
+      divergencePlayers,
     );
 
     expect(result.diverged).toBe(true);
   });
 
-  it('flags a captain that no longer matches at kickoff', () => {
-    const result = detectDivergence(divergenceProposal, {
-      ...matchingActual,
-      captainId: 2,
-    });
+  it('flags a captain that no longer matches at kickoff, naming both players', () => {
+    const result = detectDivergence(
+      divergenceProposal,
+      { ...matchingActual, captainId: 2 },
+      divergencePlayers,
+    );
 
     expect(result.diverged).toBe(true);
     expect(result.reasons).toEqual([
-      'captain: I set player 1 as captain, but FPL shows a different captain at kickoff',
+      'captain: I set Salah as captain, but FPL shows Palmer at kickoff',
+    ]);
+  });
+
+  it('falls back to #id when a diverged captain is not in the known player list', () => {
+    const result = detectDivergence(
+      divergenceProposal,
+      { ...matchingActual, captainId: 999 },
+      divergencePlayers,
+    );
+
+    expect(result.reasons).toEqual([
+      'captain: I set Salah as captain, but FPL shows #999 at kickoff',
     ]);
   });
 
   it('flags a starting XI that no longer matches at kickoff', () => {
-    const result = detectDivergence(divergenceProposal, {
-      ...matchingActual,
-      startingXI: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 99], // 11 swapped for 99
-    });
+    const result = detectDivergence(
+      divergenceProposal,
+      {
+        ...matchingActual,
+        startingXI: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 99], // 11 swapped for 99
+      },
+      divergencePlayers,
+    );
 
     expect(result.diverged).toBe(true);
     expect(result.reasons).toEqual([
@@ -351,10 +391,14 @@ describe('detectDivergence', () => {
   });
 
   it('does not flag lineup divergence when the same players are just listed in a different order', () => {
-    const result = detectDivergence(divergenceProposal, {
-      ...matchingActual,
-      startingXI: [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-    });
+    const result = detectDivergence(
+      divergenceProposal,
+      {
+        ...matchingActual,
+        startingXI: [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+      },
+      divergencePlayers,
+    );
 
     expect(result.diverged).toBe(false);
   });
@@ -363,6 +407,7 @@ describe('detectDivergence', () => {
     const result = detectDivergence(
       { ...divergenceProposal, chip: FplChip.TRIPLE_CAPTAIN },
       { ...matchingActual, activeChip: undefined, captainId: 2 },
+      divergencePlayers,
     );
 
     expect(result.diverged).toBe(true);
