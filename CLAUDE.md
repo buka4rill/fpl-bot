@@ -219,6 +219,58 @@ the same public picks endpoint `ResultsService` already calls) against the
 stored proposal, and excluding a diverged week from whatever step 5
 eventually trains on.
 
+**`PlayerSnapshotEntity.actualPoints` — step 5 backtesting groundwork,
+built ahead of need (2026-09-20).** `predictedPoints` was already captured
+per player-gameweek, but nothing persisted the real outcome — the only
+place actual per-player points got computed was a transient call inside
+`ResultsService.reportResult`, scoped to one proposal's own squad, then
+discarded. Without a persisted actual side, the predicted-vs-actual join
+issue #3's backtesting needs didn't exist yet, and building it later would
+mean either losing whatever history had already accumulated in the
+meantime or writing a one-off backfill script against old finished
+gameweeks. Decided to add it now instead, while the app is still only at
+GW5 — cheaper as an ongoing hook than as a retroactive fix.
+
+New nullable `actualPoints` column (migration
+`AddActualPointsToPlayerSnapshots`), filled in by `ResultsService`'s
+existing hourly poll — `checkFinishedGameweeks()` now also calls a new
+`backfillActualPoints()` step, kept in its own try/catch per gameweek so a
+failure there can never affect the proposal result-report loop it runs
+alongside. Two new `PredictionService` methods back it:
+`findSeasonGameweeksPendingActualPoints()` (every distinct
+`(season, gameweekId)` with at least one row still missing its outcome) and
+`backfillActualPoints(season, gameweekId, playerStats)` (fills them in from
+`IngestionService.getGameweekPlayerStats` — the same live-gameweek source
+`reportResult` already uses, so no new data source). `ResultsModule` now
+imports `PredictionModule` (no circular-dependency risk — `PredictionModule`
+only pulls in `IngestionModule`/`ExecutionModule`).
+
+**Verified live end-to-end, 2026-09-20, same day as build.** Applied
+against local Postgres first (`pnpm migration:run`, then
+confirmed zero drift via a follow-up `migration:generate` reporting "No
+changes in database schema were found"), then deployed to Fly and confirmed
+directly against prod's DB. Notable: GW4 — already finished by deploy time —
+backfilled retroactively in full (655/655 `player_snapshots` rows) on the
+very first boot-time poll, with no separate backfill script needed. This
+works because `findSeasonGameweeksPendingActualPoints()` scans every
+gameweek with missing rows, not just the current one, and
+`checkFinishedGameweeks()` checks each against a `finishedKeys` set built
+fresh from a live `bootstrap-static` call on every run — not the
+`gameweeks` table's own stored `finished` column, which is stale by design
+(snapshotted once at prediction time, when a gameweek is always still
+upcoming, and never updated afterward — confirmed live it still reads
+`finished: f` for GW4 in that table long after the real gameweek finished).
+GW1-3 have no snapshot data at all and can't be backfilled — prod didn't
+exist and wasn't generating predictions until GW4 (deploy day).
+
+When issue #3 actually starts, the backtesting join is `predictedPoints` vs
+`actualPoints` per `(season, gameweekId, playerId)` on `player_snapshots` —
+still worth cross-referencing against the existing step-5 checkpoint
+query's `source = 'AUTO' AND divergedFromPlan IS NOT TRUE` filter on
+`proposals` (that filter lives on the proposal, not the snapshot row, so
+how to join a "clean" gameweek's snapshots against a "clean" proposal is
+worth resolving at that point, not assumed here).
+
 **Pinned versions matter here**: `@nestjs/typeorm@12.x` is ESM-only and
 won't load under this project's CommonJS setup on Node 20 (breaks Jest and
 `ts-node` alike) — use `@nestjs/typeorm@^11.0.3` with `typeorm@^0.3.x`.
