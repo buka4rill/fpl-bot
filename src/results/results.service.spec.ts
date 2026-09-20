@@ -4,6 +4,7 @@ import { ResultsService } from './results.service';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { ProposalService } from '../proposal/proposal.service';
 import { AlertService } from '../alert/alert.service';
+import { PredictionService } from '../prediction/prediction.service';
 import { Gameweek, Player, Proposal } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import { Position } from '../common/enums/position.enum';
@@ -22,6 +23,10 @@ describe('ResultsService', () => {
     markResultReported: jest.Mock;
   };
   let alertService: { sendResultReport: jest.Mock };
+  let predictionService: {
+    findSeasonGameweeksPendingActualPoints: jest.Mock;
+    backfillActualPoints: jest.Mock;
+  };
   let config: { get: jest.Mock };
 
   const players: Player[] = [
@@ -101,6 +106,10 @@ describe('ResultsService', () => {
       markResultReported: jest.fn().mockResolvedValue(undefined),
     };
     alertService = { sendResultReport: jest.fn().mockResolvedValue(undefined) };
+    predictionService = {
+      findSeasonGameweeksPendingActualPoints: jest.fn().mockResolvedValue([]),
+      backfillActualPoints: jest.fn().mockResolvedValue(undefined),
+    };
     config = { get: jest.fn().mockReturnValue('10594985') };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -109,6 +118,7 @@ describe('ResultsService', () => {
         { provide: IngestionService, useValue: ingestionService },
         { provide: ProposalService, useValue: proposalService },
         { provide: AlertService, useValue: alertService },
+        { provide: PredictionService, useValue: predictionService },
         { provide: ConfigService, useValue: config },
       ],
     }).compile();
@@ -315,5 +325,67 @@ describe('ResultsService', () => {
       false,
     );
     expect(reported).toBe(1);
+  });
+
+  describe('actualPoints backfill', () => {
+    it('backfills a pending gameweek that has finished', async () => {
+      predictionService.findSeasonGameweeksPendingActualPoints.mockResolvedValue(
+        [{ season: '26_27', gameweekId: 4 }],
+      );
+      const statsMap = new Map([
+        [1, { playerId: 1, totalPoints: 8, minutes: 90, played: true }],
+      ]);
+      ingestionService.getGameweekPlayerStats.mockResolvedValue(statsMap);
+
+      await service.checkFinishedGameweeks();
+
+      expect(ingestionService.getGameweekPlayerStats).toHaveBeenCalledWith(4);
+      expect(predictionService.backfillActualPoints).toHaveBeenCalledWith(
+        '26_27',
+        4,
+        statsMap,
+      );
+    });
+
+    it('does not backfill a pending gameweek that has not finished yet', async () => {
+      predictionService.findSeasonGameweeksPendingActualPoints.mockResolvedValue(
+        [{ season: '26_27', gameweekId: 5 }],
+      );
+
+      await service.checkFinishedGameweeks();
+
+      expect(predictionService.backfillActualPoints).not.toHaveBeenCalled();
+    });
+
+    it('does not match a finished gameweek from a different season with the same id', async () => {
+      predictionService.findSeasonGameweeksPendingActualPoints.mockResolvedValue(
+        [{ season: '25_26', gameweekId: 4 }],
+      );
+
+      await service.checkFinishedGameweeks();
+
+      expect(predictionService.backfillActualPoints).not.toHaveBeenCalled();
+    });
+
+    it('continues to the next pending gameweek after one fails, and never breaks the proposal report loop', async () => {
+      predictionService.findSeasonGameweeksPendingActualPoints.mockResolvedValue(
+        [
+          { season: '26_27', gameweekId: 4 },
+          { season: '26_27', gameweekId: 4 },
+        ],
+      );
+      predictionService.backfillActualPoints
+        .mockRejectedValueOnce(new Error('boom'))
+        .mockResolvedValueOnce(undefined);
+      proposalService.findUnreportedTerminal.mockResolvedValue([
+        baseProposal({ gameweekId: 4, season: '26_27' }),
+      ]);
+
+      const reported = await service.checkFinishedGameweeks();
+
+      expect(predictionService.backfillActualPoints).toHaveBeenCalledTimes(2);
+      expect(alertService.sendResultReport).toHaveBeenCalledTimes(1);
+      expect(reported).toBe(1);
+    });
   });
 });

@@ -70,4 +70,16 @@ export class PlayerSnapshotEntity implements PlayerSnapshot {
   // existing rows safely (see ProposalEntity.source's comment).
   @Column({ type: 'enum', enum: TriggerSource, default: TriggerSource.MANUAL })
   source: TriggerSource;
+
+  // Persistence-only, same pattern as `capturedAt`/`source` above — unknown
+  // at snapshot time (a prediction is always for an upcoming gameweek), so
+  // starts null and is filled in by ResultsService's hourly poll once the
+  // gameweek this row is for actually finishes, from the same public
+  // live-gameweek data IngestionService.getGameweekPlayerStats already
+  // normalizes for the proposal-level result report. This is the join
+  // ARCHITECTURE.md §11 step 5's backtesting needs against `predictedPoints`
+  // above — added ahead of that work (2026-09-20) specifically so it starts
+  // accumulating from GW5 rather than only from whenever step 5 begins.
+  @Column({ type: 'float', nullable: true })
+  actualPoints?: number | null;
 }

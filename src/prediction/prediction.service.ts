@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { HeuristicStrategy } from './strategies/heuristic.strategy';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { ExecutionService } from '../execution/execution.service';
@@ -10,6 +10,7 @@ import {
   Fixture,
   Gameweek,
   Player,
+  PlayerGameweekStats,
   PlayerSnapshot,
   SquadRules,
 } from '../common/types/domain.types';
@@ -130,6 +131,55 @@ export class PredictionService {
         `Failed to record snapshot history for gameweek ${targetGameweek.id}: ${String(error)}`,
       );
     }
+  }
+
+  // Backtesting groundwork for ARCHITECTURE.md §11 step 5 (see
+  // PlayerSnapshotEntity.actualPoints's doc comment) — every distinct
+  // (season, gameweekId) with at least one snapshot row still missing its
+  // real outcome. ResultsService's hourly poll intersects this against the
+  // gameweeks it already knows are finished, so a still-in-progress
+  // gameweek's legitimately-null rows are never mistaken for backfill work.
+  async findSeasonGameweeksPendingActualPoints(): Promise<
+    { season: string; gameweekId: number }[]
+  > {
+    const rows = await this.playerSnapshotRepository.find({
+      where: { actualPoints: IsNull() },
+      select: ['season', 'gameweekId'],
+    });
+    const seen = new Set<string>();
+    const pending: { season: string; gameweekId: number }[] = [];
+    for (const row of rows) {
+      const key = `${row.season}:${row.gameweekId}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        pending.push({ season: row.season, gameweekId: row.gameweekId });
+      }
+    }
+    return pending;
+  }
+
+  // Fills in the real outcome for every snapshot row of one finished
+  // gameweek, from the same per-player live-gameweek data
+  // IngestionService.getGameweekPlayerStats already normalizes for the
+  // proposal-level result report — a player absent from that map (never
+  // appeared in the live-gameweek payload) genuinely scored 0, not unknown.
+  async backfillActualPoints(
+    season: string,
+    gameweekId: number,
+    playerStats: Map<number, PlayerGameweekStats>,
+  ): Promise<void> {
+    const rows = await this.playerSnapshotRepository.find({
+      where: { season, gameweekId, actualPoints: IsNull() },
+    });
+    if (rows.length === 0) {
+      return;
+    }
+    await this.playerSnapshotRepository.save(
+      rows.map((row) => ({
+        ...row,
+        actualPoints: playerStats.get(row.playerId)?.totalPoints ?? 0,
+      })),
+    );
   }
 
   private withNextFixtureDifficulty(

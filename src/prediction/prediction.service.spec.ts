@@ -28,7 +28,11 @@ describe('PredictionService', () => {
   let strategy: { predict: jest.Mock };
   let config: { get: jest.Mock };
   let gameweekRepository: { create: jest.Mock; save: jest.Mock };
-  let playerSnapshotRepository: { create: jest.Mock; save: jest.Mock };
+  let playerSnapshotRepository: {
+    create: jest.Mock;
+    save: jest.Mock;
+    find: jest.Mock;
+  };
 
   const players: Player[] = [
     {
@@ -141,6 +145,7 @@ describe('PredictionService', () => {
     playerSnapshotRepository = {
       create: jest.fn((snapshot: PlayerSnapshot) => snapshot),
       save: jest.fn().mockResolvedValue(undefined),
+      find: jest.fn().mockResolvedValue([]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -264,5 +269,57 @@ describe('PredictionService', () => {
     await expect(service.predictGameweek()).rejects.toThrow(
       'No upcoming gameweek',
     );
+  });
+
+  describe('findSeasonGameweeksPendingActualPoints', () => {
+    it('returns distinct (season, gameweekId) pairs among rows missing actualPoints', async () => {
+      playerSnapshotRepository.find.mockResolvedValue([
+        { season: '26_27', gameweekId: 4 },
+        { season: '26_27', gameweekId: 4 }, // same gameweek, different player — collapsed
+        { season: '26_27', gameweekId: 5 },
+      ]);
+
+      const pending = await service.findSeasonGameweeksPendingActualPoints();
+
+      expect(pending).toEqual([
+        { season: '26_27', gameweekId: 4 },
+        { season: '26_27', gameweekId: 5 },
+      ]);
+    });
+
+    it('returns nothing when every snapshot already has actualPoints', async () => {
+      playerSnapshotRepository.find.mockResolvedValue([]);
+
+      const pending = await service.findSeasonGameweeksPendingActualPoints();
+
+      expect(pending).toEqual([]);
+    });
+  });
+
+  describe('backfillActualPoints', () => {
+    it('fills actualPoints from live-gameweek stats, defaulting to 0 for a player missing from the map', async () => {
+      playerSnapshotRepository.find.mockResolvedValue([
+        { season: '26_27', gameweekId: 4, playerId: 1 },
+        { season: '26_27', gameweekId: 4, playerId: 2 },
+      ]);
+      const statsMap = new Map([
+        [1, { playerId: 1, totalPoints: 12, minutes: 90, played: true }],
+      ]);
+
+      await service.backfillActualPoints('26_27', 4, statsMap);
+
+      expect(playerSnapshotRepository.save).toHaveBeenCalledWith([
+        { season: '26_27', gameweekId: 4, playerId: 1, actualPoints: 12 },
+        { season: '26_27', gameweekId: 4, playerId: 2, actualPoints: 0 },
+      ]);
+    });
+
+    it('does not write anything when there is nothing pending for that gameweek', async () => {
+      playerSnapshotRepository.find.mockResolvedValue([]);
+
+      await service.backfillActualPoints('26_27', 4, new Map());
+
+      expect(playerSnapshotRepository.save).not.toHaveBeenCalled();
+    });
   });
 });

@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { ProposalService } from '../proposal/proposal.service';
 import { AlertService } from '../alert/alert.service';
+import { PredictionService } from '../prediction/prediction.service';
 import { Player, Proposal, SquadRules } from '../common/types/domain.types';
 import { ProposalStatus } from '../common/enums/proposal-status.enum';
 import {
@@ -36,6 +37,7 @@ export class ResultsService implements OnModuleInit, OnModuleDestroy {
     private readonly ingestionService: IngestionService,
     private readonly proposalService: ProposalService,
     private readonly alertService: AlertService,
+    private readonly predictionService: PredictionService,
     private readonly config: ConfigService,
   ) {}
 
@@ -75,6 +77,13 @@ export class ResultsService implements OnModuleInit, OnModuleDestroy {
         .map((gameweek) => `${gameweek.season}:${gameweek.id}`),
     );
 
+    // Best-effort backtesting groundwork (see PlayerSnapshotEntity.actualPoints's
+    // doc comment) — kept separate from the proposal result-report loop
+    // below (different failure domain, and it covers the whole player pool
+    // each snapshot was taken for, not just proposals) so a problem here
+    // can never affect the `reported` count callers rely on.
+    await this.backfillActualPoints(finishedKeys);
+
     const candidates = await this.proposalService.findUnreportedTerminal();
     let reported = 0;
     for (const proposal of candidates) {
@@ -86,6 +95,33 @@ export class ResultsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return reported;
+  }
+
+  // Fills in PlayerSnapshotEntity.actualPoints for every finished gameweek
+  // that still has rows missing it. One failure (e.g. a transient fetch
+  // error for one gameweek) must not stop the others, or block the proposal
+  // result-report loop that runs alongside it.
+  private async backfillActualPoints(finishedKeys: Set<string>): Promise<void> {
+    const pending =
+      await this.predictionService.findSeasonGameweeksPendingActualPoints();
+    for (const { season, gameweekId } of pending) {
+      if (!finishedKeys.has(`${season}:${gameweekId}`)) {
+        continue;
+      }
+      try {
+        const playerStats =
+          await this.ingestionService.getGameweekPlayerStats(gameweekId);
+        await this.predictionService.backfillActualPoints(
+          season,
+          gameweekId,
+          playerStats,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to backfill actual points for ${season} GW${gameweekId}: ${String(error)}`,
+        );
+      }
+    }
   }
 
   // Best-effort per proposal — one failure (e.g. a transient fetch error)
