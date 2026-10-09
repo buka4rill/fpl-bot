@@ -219,6 +219,61 @@ describe('ChipEvaluatorService', () => {
     expect(best.chip).toBe(FplChip.BENCH_BOOST);
   });
 
+  describe('Wildcard/Free Hit premium (regression — GW6 Wildcard, 2026-10-09)', () => {
+    const premiums = (key: string): number =>
+      key === 'optimizer.transferChipRiskPremium' ? 20 : 8;
+
+    // Wildcard's candidate is a rebuilt squad, scoring `extra` more on the
+    // XI than the chip-free one — the shape that cleared the 8-pt bar live.
+    const rebuildScoring =
+      (extra: number) => (_p: unknown, _ft: unknown, chip?: FplChip) =>
+        chip === FplChip.WILDCARD
+          ? {
+              ...baseOptimization,
+              totalPredictedPoints:
+                baseOptimization.totalPredictedPoints + extra,
+            }
+          : baseOptimization;
+
+    it('does not recommend Wildcard for a gain that clears the normal chip premium but not its own', async () => {
+      config.get.mockImplementation(premiums);
+      squadOptimizerService.evaluateStrategy.mockImplementation(
+        rebuildScoring(15),
+      );
+
+      const { best } = await service.evaluateBestStrategy(undefined, [
+        FplChip.WILDCARD,
+      ]);
+
+      // +15 beats the 8-pt chip premium but not the 20-pt one.
+      expect(best.chip).toBeUndefined();
+    });
+
+    it('still recommends Wildcard once its gain clearly clears its own premium', async () => {
+      config.get.mockImplementation(premiums);
+      squadOptimizerService.evaluateStrategy.mockImplementation(
+        rebuildScoring(25),
+      );
+
+      const { best } = await service.evaluateBestStrategy(undefined, [
+        FplChip.WILDCARD,
+      ]);
+
+      expect(best.chip).toBe(FplChip.WILDCARD);
+    });
+
+    it('leaves Bench Boost/Triple Captain on the normal premium', async () => {
+      config.get.mockImplementation(premiums);
+
+      const { best } = await service.evaluateBestStrategy(undefined, [
+        FplChip.TRIPLE_CAPTAIN,
+      ]);
+
+      // Triple Captain's +10 still clears the 8-pt premium (70-8=62 > 60).
+      expect(best.chip).toBe(FplChip.TRIPLE_CAPTAIN);
+    });
+  });
+
   it('defaults to the chip-free candidate when nothing beats it (no benefit / tie)', async () => {
     // Every candidate scores identically to "no chip" here (no hit cost,
     // and captain/bench math only diverges for Triple Captain/Bench Boost

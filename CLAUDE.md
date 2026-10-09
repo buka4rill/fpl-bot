@@ -436,7 +436,8 @@ hit.
 
 Separately, the recommendation itself is the structural Wildcard/Free Hit
 over-recommendation flagged under "`chipRiskPremium` is a guardrail..."
-below, now observed live — unchanged by this fix.
+below, now observed live — addressed separately the same day with a
+higher Wildcard/Free Hit-only premium (see there).
 
 **Telegram webhook infra note (2026-09-08, unrelated to the chip work
 above but hit while testing it)**: at the moment Bench Boost was approved,
@@ -935,6 +936,19 @@ is effectively unbounded — likely to clear the flat 8-pt premium even
 more readily than Bench Boost/Triple Captain do. Revisit raising the
 premium specifically for these two once they're actually observable
 against a real squad (not yet possible on this account).
+
+**Confirmed live and acted on, 2026-10-09.** The first AUTO proposal after
+the test account's Wildcard turned `available` (GW6) recommended it
+immediately — exactly as predicted. Added a separate
+`transferChipRiskPremium` (`OPTIMIZER_TRANSFER_CHIP_RISK_PREMIUM`, default
+20) that `ChipEvaluatorService` applies to Wildcard/Free Hit only; Bench
+Boost/Triple Captain stay on the 8-pt `chipRiskPremium`. Deliberately a
+raised bar rather than excluding these two from auto-recommendation
+entirely: the owner wants them to still come up occasionally, so the
+fixed transfer-chip payload (see "Execution auth") eventually gets a
+bot-driven live run — and `/chip wildcard|freehit` remains the explicit
+manual path regardless. 20 is a guess like 8 was, not tuned against data;
+issue #4's lookahead is still the real fix.
 
 **The real fix, discussed but not started: multi-gameweek lookahead with
 a rolling-max comparison.** Predict the next N gameweeks (5-8, say)

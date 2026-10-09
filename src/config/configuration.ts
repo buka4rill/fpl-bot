@@ -22,6 +22,7 @@ export interface AppConfig {
     maxHitsPerWeek: number;
     hitRiskPremium: number;
     chipRiskPremium: number;
+    transferChipRiskPremium: number;
   };
   execution: {
     // How long to keep re-checking FPL's my-team endpoint for a declared
@@ -81,6 +82,9 @@ export default (): AppConfig => ({
     maxHitsPerWeek: Number(process.env.OPTIMIZER_MAX_HITS_PER_WEEK ?? 1),
     hitRiskPremium: Number(process.env.OPTIMIZER_HIT_RISK_PREMIUM ?? 4),
     chipRiskPremium: Number(process.env.OPTIMIZER_CHIP_RISK_PREMIUM ?? 8),
+    transferChipRiskPremium: Number(
+      process.env.OPTIMIZER_TRANSFER_CHIP_RISK_PREMIUM ?? 20,
+    ),
   },
   execution: {
     chipConfirmationRetries: Number(

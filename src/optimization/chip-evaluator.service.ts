@@ -81,10 +81,24 @@ export class ChipEvaluatorService {
     const chipRiskPremium = Number(
       this.config.get<number>('optimizer.chipRiskPremium') ?? 8,
     );
+    // Wildcard/Free Hit get their own, higher bar (2026-10-09): their
+    // candidate is a hit-free full rebuild from the whole player pool, so
+    // its edge over "no chip" isn't capped by a few players' scores the way
+    // Bench Boost/Triple Captain's is — and with HeuristicStrategy's
+    // inflated predictions it cleared the 8-pt bar on the very first week
+    // Wildcard was available (GW6, live). Still a guessed threshold, not
+    // hold-value modeling — issue #4's lookahead is the real fix.
+    const transferChipRiskPremium = Number(
+      this.config.get<number>('optimizer.transferChipRiskPremium') ?? 20,
+    );
+    const premiumFor = (chip: FplChip): number =>
+      chip === FplChip.WILDCARD || chip === FplChip.FREE_HIT
+        ? transferChipRiskPremium
+        : chipRiskPremium;
     const decisionScore = (candidate: ChipCandidate): number =>
       candidate.chip === undefined
         ? candidate.netExpectedPoints
-        : candidate.netExpectedPoints - chipRiskPremium;
+        : candidate.netExpectedPoints - premiumFor(candidate.chip);
 
     // "No chip" is first — on a tie (or no benefit clearing the premium),
     // the reduce below only replaces on a strictly greater value, so it
