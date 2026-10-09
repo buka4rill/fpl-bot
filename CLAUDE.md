@@ -950,6 +950,24 @@ bot-driven live run — and `/chip wildcard|freehit` remains the explicit
 manual path regardless. 20 is a guess like 8 was, not tuned against data;
 issue #4's lookahead is still the real fix.
 
+How to operate it:
+- **Tune without a code change**: `fly secrets set -a fpl-bot-buka4rill
+  OPTIMIZER_TRANSFER_CHIP_RISK_PREMIUM=<n>` (triggers an automatic
+  restart). Lower = recommended more often, higher = rarer.
+- **What to watch**: each proposal alert's `📊 Considered:` line lists every
+  candidate's net expected points. If Wildcard/Free Hit routinely come out
+  30+ points above "no chip" over the next few weeks, 20 is still too low
+  and should be raised.
+- **Testing a transfer chip on demand** (e.g. to verify the fixed payload,
+  issue #2): `/chip freehit` (or `wildcard`) in Telegram bypasses the
+  premium entirely — no need to wait for an auto-recommendation. Only one
+  chip can be active per gameweek, so a chip already active that week
+  blocks it (GW6's Wildcard leaves Free Hit `unavailable` until GW7).
+- **Observed live with Wildcard active**: my-team reports `transfers.made:
+  0` even after a full rebuild — FPL doesn't count Wildcard transfers — so
+  `/status`'s pending hit correctly reads 0. The non-chip pending-hit case
+  (`(made − limit) × cost`) is still unverified against a real hit.
+
 **The real fix, discussed but not started: multi-gameweek lookahead with
 a rolling-max comparison.** Predict the next N gameweeks (5-8, say)
 instead of just the next one — buildable now per the fixture-data finding
