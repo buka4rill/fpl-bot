@@ -5,6 +5,7 @@ import { of, throwError } from 'rxjs';
 import { AxiosError } from 'axios';
 import * as fs from 'fs';
 import { FplAuthClient } from './fpl-auth.client';
+import { FplChip } from '../../common/enums/chip.enum';
 
 jest.mock('fs');
 
@@ -88,6 +89,42 @@ describe('FplAuthClient', () => {
 
       expect(http.post).toHaveBeenCalledTimes(1);
       expect(http.get).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('submitTransfers', () => {
+    // Regression: `wildcard: true`/`freehit: true` booleans are silently
+    // ignored by FPL (live GW6 Wildcard, 2026-10-09) — the chip has to go in
+    // the single `chip` field FPL's own web app sends.
+    it('sends a transfer chip as a single `chip` field, not booleans', async () => {
+      http.post
+        .mockReturnValueOnce(of(tokenResponse()))
+        .mockReturnValueOnce(of({ data: '' }));
+
+      await client.submitTransfers(1, 6, [], FplChip.WILDCARD);
+
+      const [url, body] = http.post.mock.calls[1] as [string, object];
+      expect(url).toMatch(/\/transfers\/$/);
+      expect(body).toEqual({
+        confirmed: true,
+        entry: 1,
+        event: 6,
+        transfers: [],
+        chip: 'wildcard',
+      });
+    });
+
+    it('sends `chip: null` for a plain transfer week', async () => {
+      http.post
+        .mockReturnValueOnce(of(tokenResponse()))
+        .mockReturnValueOnce(of({ data: '' }));
+
+      await client.submitTransfers(1, 6, [], null);
+
+      const [, body] = http.post.mock.calls[1] as [string, object];
+      expect(body).toMatchObject({ chip: null });
+      expect(body).not.toHaveProperty('wildcard');
+      expect(body).not.toHaveProperty('freehit');
     });
   });
 

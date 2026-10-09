@@ -132,9 +132,31 @@ describe('TeamStateService', () => {
       const [message] = alertService.sendMessage.mock.calls[0] as [string];
       expect(message).toContain('GW4');
       expect(message).toContain('Free Transfers: 3');
+      expect(message).toContain('Made this GW: 0  (no hit)');
       expect(message).toContain('Bench Boost 1');
       expect(message).toContain('Wildcard 1');
       expect(state.freeTransfers).toBe(3);
+    });
+
+    it('flags a pending hit for transfers beyond the free limit', async () => {
+      executionService.getTeamState.mockResolvedValue(
+        teamState({
+          transfers: {
+            cost: 4,
+            status: 'cost',
+            limit: 3,
+            made: 5,
+            bank: 2,
+            value: 998,
+          },
+        }),
+      );
+
+      const state = await service.reportTeamState(4);
+
+      const [message] = alertService.sendMessage.mock.calls[0] as [string];
+      expect(message).toContain('Made this GW: 5  ⚠️ Pending hit: −8 pts');
+      expect(state.pendingHitPoints).toBe(8);
     });
   });
 });

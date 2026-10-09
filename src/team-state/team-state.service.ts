@@ -6,9 +6,16 @@ import {
   FplChipStatus,
   FplTransfersState,
 } from '../auth/clients/fpl-auth.types';
+import { pendingHitPoints } from '../common/utils/transfer-hits.util';
 
 export interface TeamState {
   freeTransfers: number;
+  // Transfers already confirmed this gameweek, and the points FPL will
+  // deduct for them at the deadline (undefined if my-team's shape doesn't
+  // say) — added 2026-10-09 so a hit like GW6's failed-Wildcard rebuild is
+  // visible from Telegram, not only the FPL app.
+  transfersMade: number;
+  pendingHitPoints: number | undefined;
   bank: number;
   teamValue: number;
   chips: FplChipStatus[];
@@ -56,6 +63,8 @@ export class TeamStateService {
     );
     return {
       freeTransfers: this.deriveFreeTransfers(transfers),
+      transfersMade: transfers.made,
+      pendingHitPoints: pendingHitPoints(transfers, chips),
       // FPL reports bank/value in tenths of a million, same unit as
       // FplPick's selling_price/purchase_price.
       bank: transfers.bank / 10,
@@ -93,6 +102,7 @@ export class TeamStateService {
       `📋 *GW${gameweekId} Team Status*`,
       '',
       `🔄 Free Transfers: ${state.freeTransfers}`,
+      `🔁 Made this GW: ${state.transfersMade}${this.renderHit(state.pendingHitPoints)}`,
       `💰 Bank: £${state.bank.toFixed(1)}m  📈 Squad Value: £${state.teamValue.toFixed(1)}m`,
       '',
       '🃏 *Chips:*',
@@ -103,5 +113,10 @@ export class TeamStateService {
       lines.push(`${emoji} ${name} ${chip.number} — ${chip.status_for_entry}`);
     }
     return lines.join('\n');
+  }
+
+  private renderHit(hit: number | undefined): string {
+    if (hit === undefined) return '';
+    return hit > 0 ? `  ⚠️ Pending hit: −${hit} pts` : '  (no hit)';
   }
 }

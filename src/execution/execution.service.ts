@@ -18,6 +18,7 @@ import {
 import { ExecutionLogEntity } from '../persistence/entities/execution-log.entity';
 import { IngestionService } from '../ingestion/ingestion.service';
 import { FplChip } from '../common/enums/chip.enum';
+import { pendingHitPoints } from '../common/utils/transfer-hits.util';
 
 export interface CurrentSquadShape {
   lineup: number[];
@@ -143,8 +144,12 @@ export class ExecutionService {
       confirmed: boolean;
       chips: FplChipStatus[];
     }> = [];
+    // Latest my-team state seen — feeds the pending-hit figure in the
+    // failure message below when a transfer chip didn't land.
+    let latestMyTeam: FplMyTeam | undefined;
     if (success && proposal.chip !== undefined) {
       const declaredChipName: string = proposal.chip;
+      latestMyTeam = lineupResult as FplMyTeam;
       chipConfirmed = this.isChipPlayed(
         (lineupResult as FplMyTeam).chips,
         declaredChipName,
@@ -168,6 +173,7 @@ export class ExecutionService {
       for (let attempt = 1; !chipConfirmed && attempt <= retries; attempt++) {
         await sleep(retryDelayMs);
         const recheck = await this.fplAuthClient.getMyTeam(teamId);
+        latestMyTeam = recheck;
         chipConfirmed = this.isChipPlayed(
           recheck.chips,
           declaredChipName,
@@ -210,13 +216,37 @@ export class ExecutionService {
       // than a generic failure message (CLAUDE.md: fail loudly, never
       // silently, and never understate what actually happened).
       const message = !chipConfirmed
-        ? `Transfers/lineup were applied for proposal ${proposal.id}, but FPL still hasn't confirmed the "${proposal.chip}" chip as played after ${chipConfirmationAttempts.length - 1} retries — this has turned out to be a false alarm before (FPL's own confirmation can lag longer than this check waits), so check /status yourself before assuming it genuinely failed. See execution log ${log.id}.`
+        ? proposal.chip !== undefined && TRANSFER_CHIPS.has(proposal.chip)
+          ? this.transferChipFailureMessage(proposal, latestMyTeam, log.id)
+          : `Transfers/lineup were applied for proposal ${proposal.id}, but FPL still hasn't confirmed the "${proposal.chip}" chip as played after ${chipConfirmationAttempts.length - 1} retries — this has turned out to be a false alarm before (FPL's own confirmation can lag longer than this check waits), so check /status yourself before assuming it genuinely failed. See execution log ${log.id}.`
         : usesTransferEndpoint
           ? `Transfers were applied for proposal ${proposal.id}, but setting the final lineup/captain failed — check the FPL app directly. See execution log ${log.id}.`
           : `Execution failed for proposal ${proposal.id} — see execution log ${log.id}.`;
       throw new Error(message);
     }
     return log;
+  }
+
+  // A Wildcard/Free Hit that didn't land is not a "maybe it's lag" case like
+  // Bench Boost/Triple Captain: its transfers were submitted in the same
+  // request and *did* apply, just as ordinary transfers — so a planned
+  // free rebuild is now sitting on real hits (GW6, 2026-10-09). Say that,
+  // with the actual pending deduction, and the fix: playing the chip in the
+  // app still covers transfers already confirmed this gameweek.
+  private transferChipFailureMessage(
+    proposal: Proposal,
+    latestMyTeam: FplMyTeam | undefined,
+    logId: string,
+  ): string {
+    const hit = pendingHitPoints(latestMyTeam?.transfers, latestMyTeam?.chips);
+    const made = latestMyTeam?.transfers?.made;
+    const hitText =
+      hit === undefined
+        ? 'they may now carry points hits'
+        : hit > 0
+          ? `${made} made — a −${hit} pt hit is pending at the deadline`
+          : `${made ?? 'no'} made, no hit pending`;
+    return `FPL did not play the "${proposal.chip}" chip for proposal ${proposal.id}, but its transfers were still applied as ordinary transfers (${hitText}). Play the chip yourself on the FPL app's Transfers page before the deadline — it covers transfers already made this gameweek — then check /status. See execution log ${logId}.`;
   }
 
   // The real bug behind three false "execution FAILED" alerts in two days
@@ -366,10 +396,9 @@ export class ExecutionService {
       teamId,
       proposal.gameweekId,
       submissions,
-      {
-        wildcard: proposal.chip === FplChip.WILDCARD,
-        freehit: proposal.chip === FplChip.FREE_HIT,
-      },
+      proposal.chip === FplChip.WILDCARD || proposal.chip === FplChip.FREE_HIT
+        ? proposal.chip
+        : null,
     );
   }
 

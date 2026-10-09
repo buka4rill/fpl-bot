@@ -2,6 +2,8 @@
 // browser session (see project memory: fpl-write-api-contract). Undocumented
 // and only known through this capture — can drift without notice.
 
+import { FplChip } from '../../common/enums/chip.enum';
+
 export interface FplPick {
   element: number;
   position: number;
@@ -77,6 +79,14 @@ export interface FplTokenResponse {
 // the transfer; a clean response is an empty-body 200 (axios hands it back
 // as `''`), not `{}`. Response shape on an actual error is still unverified
 // — treated as `unknown` at the call site rather than typed here.
+//
+// Chip field corrected 2026-10-09: the community library's
+// `wildcard: true`/`freehit: true` booleans are silently ignored by FPL — a
+// live GW6 Wildcard proposal applied every transfer as an ordinary
+// (hit-incurring) transfer with the chip never played. FPL's own web app
+// bundle (`/assets/index-*.js`, its confirm-transfers and play-chip actions)
+// sends a single `chip: 'wildcard' | 'freehit' | null` field instead, and
+// plays a transfer chip on its own as that field plus `transfers: []`.
 export interface FplTransferSubmission {
   element_in: number;
   element_out: number;
@@ -89,6 +99,7 @@ export interface FplTransferPayload {
   entry: number;
   event: number;
   transfers: FplTransferSubmission[];
-  wildcard: boolean;
-  freehit: boolean;
+  chip: FplTransferChip | null;
 }
+
+export type FplTransferChip = FplChip.WILDCARD | FplChip.FREE_HIT;

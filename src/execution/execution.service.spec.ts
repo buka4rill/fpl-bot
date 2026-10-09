@@ -176,7 +176,7 @@ describe('ExecutionService', () => {
           purchase_price: 75,
         },
       ],
-      { wildcard: false, freehit: false },
+      null,
     );
     expect(fplAuthClient.setLineup).toHaveBeenCalledWith(
       6909032,
@@ -225,10 +225,12 @@ describe('ExecutionService', () => {
 
     await service.apply(baseProposal({ chip: FplChip.WILDCARD }));
 
-    expect(fplAuthClient.submitTransfers).toHaveBeenCalledWith(6909032, 4, [], {
-      wildcard: true,
-      freehit: false,
-    });
+    expect(fplAuthClient.submitTransfers).toHaveBeenCalledWith(
+      6909032,
+      4,
+      [],
+      FplChip.WILDCARD,
+    );
     // Wildcard rides the transfers endpoint, not the my-team chip field.
     expect(fplAuthClient.setLineup).toHaveBeenCalledWith(
       6909032,
@@ -259,7 +261,7 @@ describe('ExecutionService', () => {
       baseProposal({ chip: FplChip.FREE_HIT }),
     );
     const assertion = expect(applyPromise).rejects.toThrow(
-      'still hasn\'t confirmed the "freehit" chip as played',
+      'FPL did not play the "freehit" chip',
     );
     await jest.runAllTimersAsync();
     await assertion;
@@ -270,6 +272,36 @@ describe('ExecutionService', () => {
     // submitTransfers' own getMyTeam (Free Hit rides the transfer
     // endpoint) + apply()'s own (building picks) + one per retry.
     expect(fplAuthClient.getMyTeam).toHaveBeenCalledTimes(5);
+
+    jest.useRealTimers();
+  });
+
+  it('reports the pending hit when a Wildcard did not land but its transfers did (regression — GW6 Wildcard, 2026-10-09)', async () => {
+    jest.useFakeTimers();
+    const unplayedWildcard = {
+      picks: currentPicks,
+      picks_last_updated: '',
+      chips: [
+        {
+          name: 'wildcard',
+          chip_type: 'transfer',
+          status_for_entry: 'available',
+          played_by_entry: [],
+        },
+      ],
+      transfers: { cost: 4, status: 'cost', limit: 2, made: 5 },
+    };
+    fplAuthClient.setLineup.mockResolvedValue(unplayedWildcard);
+    fplAuthClient.getMyTeam.mockResolvedValue(unplayedWildcard);
+
+    const applyPromise = service.apply(
+      baseProposal({ chip: FplChip.WILDCARD }),
+    );
+    const assertion = expect(applyPromise).rejects.toThrow(
+      '5 made — a −12 pt hit is pending at the deadline',
+    );
+    await jest.runAllTimersAsync();
+    await assertion;
 
     jest.useRealTimers();
   });

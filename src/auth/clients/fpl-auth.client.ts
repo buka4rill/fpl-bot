@@ -9,6 +9,7 @@ import {
   FplMyTeam,
   FplPick,
   FplTokenResponse,
+  FplTransferChip,
   FplTransferPayload,
   FplTransferSubmission,
 } from './fpl-auth.types';
@@ -119,13 +120,14 @@ export class FplAuthClient {
   // made. What a second `confirmed: true` call would do on top of an
   // already-applied transfer is untested and deliberately not risked here —
   // this sends exactly one request, `confirmed: true` directly. `submissions`
-  // can be an empty array with a chip flag set — that's how Wildcard/Free
-  // Hit get activated on a week with no actual transfers.
+  // can be an empty array with a chip set — that's how Wildcard/Free Hit get
+  // activated on a week with no actual transfers. The chip goes in a single
+  // `chip` field, not booleans — see FplTransferPayload for why.
   async submitTransfers(
     teamId: number,
     gameweekId: number,
     submissions: FplTransferSubmission[],
-    chip: { wildcard: boolean; freehit: boolean },
+    chip: FplTransferChip | null,
   ): Promise<unknown> {
     const accessToken = await this.ensureAccessToken();
     const payload: FplTransferPayload = {
@@ -133,8 +135,7 @@ export class FplAuthClient {
       entry: teamId,
       event: gameweekId,
       transfers: submissions,
-      wildcard: chip.wildcard,
-      freehit: chip.freehit,
+      chip,
     };
     const headers = { Authorization: `Bearer ${accessToken}` };
 
