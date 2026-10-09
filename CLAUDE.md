@@ -49,7 +49,7 @@ file is the short version for whichever session picks this repo up next.
 | `alert` | implemented — Telegram adapter, proposal alerts + execution-result alerts |
 | `approval` | implemented — state machine (`PENDING → APPROVED/REJECTED/EXPIRED`) + webhook controller (`approve:`/`reject:`/`approvenochip:` — see "Three-way approval when a chip is recommended" below — plus `appliedyes:`/`appliedno:`, see "Post-deadline applied-manually check-in" below); triggers execution on `APPROVED`. Also the single Telegram webhook entry point for plain-message slash commands — see `telegram-commands` below |
 | `telegram-commands` | implemented (2026-09-08) — `/status`, `/propose`, `/login`, `/help` reachable from the Telegram chat itself, routed through `ApprovalController`'s webhook (the only Telegram entry point) to `TelegramCommandsService`; see "Telegram slash commands" below |
-| `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers, Bench Boost, and Triple Captain all verified live 2026-09-08; Wildcard/Free Hit still unverified — see below |
+| `execution` | implemented for **lineup/captain/transfers/chips** — `ExecutionService`, using `FplAuthClient` from `AuthModule`. Transfers, Bench Boost, and Triple Captain all verified live 2026-09-08; Wildcard/Free Hit payload was wrong (silently ignored by FPL) until 2026-10-09 — fixed from FPL's own web bundle + a live capture, but not yet verified through a bot-driven execution — see below |
 | `auth` | implemented (2026-09-08) — holds `FplAuthClient`/the authenticated session (moved out of `ExecutionModule`, see "Execution auth" below); `AuthService.isAuthenticated()`/`assertAuthenticated()` let other modules check/gate on login state; `POST /auth/token` (shared-secret guarded) applies a freshly-captured refresh token to the running instance — the landing spot for `pnpm run auth:login`'s Playwright-assisted capture (`scripts/auth-login.ts`) |
 | `scheduler` | implemented — hourly deadline-watcher, dynamic (no fixed weekday); also gates on `AuthService.isAuthenticated()` before generating a proposal — see "Execution auth" below |
 | `results` | implemented (2026-09-08) — `ResultsService` (own hourly poll, public-API only) reports "how did my suggestion actually score" for every terminal proposal (APPROVED/REJECTED/EXPIRED) once its gameweek finishes — full autosub/chip-accurate simulation, not an approximation; `POST /results/report` manually re-triggers it — see "Post-gameweek results report" below. Also flags a post-approval manual edit in the FPL app (chip/captain/lineup) via a real picks-endpoint cross-check, 2026-09-09 — see "Divergence detection" below |
@@ -390,9 +390,53 @@ independently via a fresh `/team-state/report` call showing `3xc` at
 `status_for_entry: "active"`. Both Bench Boost and Triple Captain are now
 fully verified live — only Wildcard/Free Hit remain, per below.
 
-**`wildcard`/`freehit` on `/api/transfers/` remain unverified** — this
-account's Wildcard/Free Hit still show `unavailable` (see the correction
-below).
+**`wildcard`/`freehit` on `/api/transfers/` — the payload was wrong all
+along; fixed 2026-10-09 after a real GW6 Wildcard failed live.** The first
+AUTO proposal to recommend Wildcard (once the test account's transfer
+chips finally turned `available`) was approved "with chip," and execution
+reported the now-familiar `hasn't confirmed the "wildcard" chip as
+played` failure — but this time it was real, not lag: `/team-state/report`
+showed `wildcard` still `available`, `played_by_entry: []`, while bank/
+value showed the full rebuild had applied (£100.7m incl. £8.2m bank at the
+GW5 deadline → £81.4m + £19.0m bank). **FPL ignored `wildcard: true`
+entirely and applied every transfer as an ordinary one** — a planned free
+rebuild sitting on real −4 hits, with no error returned. Root cause: the
+`wildcard`/`freehit` booleans came from the same community library whose
+dry-run/commit and `{}`-response assumptions were already disproved above;
+neither field exists in FPL's real contract. FPL's own web bundle
+(`fantasy.premierleague.com/assets/index-*.js`, its confirm-transfers and
+play-chip actions — public, no auth needed to read) sends a single
+`chip: 'wildcard' | 'freehit' | null`, and plays a transfer chip on its
+own as that field plus `transfers: []` — confirmed by a DevTools capture
+when the owner played the Wildcard by hand in the web app to clear the
+hits (`{"chip":"wildcard","entry":10594985,"event":6,"transfers":[]}`),
+after which `/team-state/report` showed `wildcard: active,
+played_by_entry: [6]`. FPL lets a transfer chip be played after transfers
+were already confirmed that gameweek, covering them retroactively — that's
+the recovery path for this failure mode. `FplTransferPayload`/
+`FplAuthClient.submitTransfers` now send `chip` (we still also send
+`confirmed: true`, which the web app doesn't — kept because plain transfers
+are proven live with it); covered by request-body tests in
+`fpl-auth.client.spec.ts`. **The fixed payload itself is not yet verified
+by a bot-driven execution** — first real Wildcard/Free Hit through the bot
+after this closes [issue #2](https://github.com/buka4rill/fpl-bot/issues/2).
+
+Two follow-ups shipped with it: a failed transfer chip is no longer
+reported as a maybe-false-alarm (that framing came from the Bench Boost
+lag incidents and is wrong here — its transfers *did* apply);
+`ExecutionService.transferChipFailureMessage` says so outright, with the
+pending deduction, and tells the owner to play the chip in the app. And
+`/status` now shows `Made this GW: N` plus any pending hit, via
+`pendingHitPoints()` (`src/common/utils/transfer-hits.util.ts`) —
+`(made − limit) × cost`, zero under an unlimited week or an active
+transfer chip. Note `limit` is the gameweek's total free transfers, not
+what's left (observed: still 2 after the rebuild used them up); the hit
+formula is inferred from that and not yet checked against a real pending
+hit.
+
+Separately, the recommendation itself is the structural Wildcard/Free Hit
+over-recommendation flagged under "`chipRiskPremium` is a guardrail..."
+below, now observed live — unchanged by this fix.
 
 **Telegram webhook infra note (2026-09-08, unrelated to the chip work
 above but hit while testing it)**: at the moment Bench Boost was approved,
@@ -470,7 +514,10 @@ state `setLineup` returns straight after still showed the chip never
 played. **FPL silently drops a chip flag it won't honor rather than
 rejecting the request** — the account genuinely still can't play
 Wildcard/Free Hit (consistent with the theory above), but the API gave no
-error to catch, so `ExecutionService.apply` reported success anyway. Bank
+error to catch, so `ExecutionService.apply` reported success anyway.
+(*Correction 2026-10-09*: the chip really was `unavailable` then, but
+`freehit: true` was never a real field anyway — even an available chip
+would have been dropped. See the payload fix above.) Bank
 (4.6) and team value (95.4) were unchanged — nothing harmful happened,
 just a false-positive confirmation message.
 
@@ -1707,12 +1754,14 @@ progress (see the step-5 data-checkpoint note above) — see README's
    verified separately, same day, once `/propose`'s real optimizer path
    first reached a live submission and hit the position-pairing bug above
    — re-verified live after the fix (see "Transfer-hit policy"/`deriveTransfers`
-   above). Only Wildcard/Free Hit remain unverified
+   above). Only Wildcard/Free Hit remain unverified — their payload was
+   found wrong and fixed 2026-10-09 (see "Execution auth"), pending a
+   bot-driven live run
 5. ⬜ Iterate the prediction model once there's backtestable history
 
 Currently at: **step 4's transfer path, Bench Boost, and Triple Captain all
-verified**, only Wildcard/Free Hit still pending (see "Execution auth"
-above for what's blocking it), plus the weekly team-status report, the
+verified**, only Wildcard/Free Hit still pending (payload fixed
+2026-10-09, awaiting a live bot-driven run — see "Execution auth"), plus the weekly team-status report, the
 transfer-hit policy fix, and the post-deadline applied-manually check-in
 (all 2026-09-08, see above) on top of persistence. Next: step 5 needs a
 few gameweeks of `PlayerSnapshot` history to accumulate — now actually
